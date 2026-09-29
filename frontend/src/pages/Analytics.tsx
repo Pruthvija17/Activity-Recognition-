@@ -1,47 +1,31 @@
-import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-
-interface ActivityCount {
-  name: string;
-  value: number;
-  color: string;
-}
-
-interface PersonStat {
-  name: string;
-  activities: number;
-  unknowns: number;
-  avg_confidence: number;
-}
+import { api } from '../lib/api';
+import { useApiData } from '../hooks/useApiData';
+import { StatusNotice } from '../components/StatusNotice';
 
 export default function Analytics() {
-  const [activityData, setActivityData] = useState<ActivityCount[]>([]);
-  const [personData, setPersonData] = useState<PersonStat[]>([]);
-
-  useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        const res = await fetch('http://localhost:8000/api/analytics');
-        if (res.ok) {
-          const data = await res.json();
-          setActivityData(data.activity_distribution || []);
-          setPersonData(data.person_stats || []);
-        }
-      } catch (err) {
-        console.error('Failed to fetch analytics:', err);
-      }
-    };
-    fetchAnalytics();
-  }, []);
+  const { data, error } = useApiData(() => api.getAnalytics());
+  const activityData = data?.activity_distribution ?? [];
+  const personData = data?.person_stats ?? [];
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-deep-blue">Analytics</h1>
-        <button className="bg-white border border-soft-blue px-4 py-2 rounded-lg text-sm font-medium text-brand-primary hover:bg-ice-blue transition-colors shadow-sm">
-          Export Report
-        </button>
+        <Link
+          to="/reports"
+          className="bg-white border border-soft-blue px-4 py-2 rounded-lg text-sm font-medium text-brand-primary hover:bg-ice-blue transition-colors shadow-sm"
+        >
+          Go to Reports
+        </Link>
       </div>
+
+      {error && error.kind === 'http' && (
+        <StatusNotice tone="error" title="Could not load analytics">
+          {error.message}
+        </StatusNotice>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-2xl border border-soft-blue shadow-sm">

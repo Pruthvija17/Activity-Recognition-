@@ -1,21 +1,11 @@
-import { useEffect, useState } from 'react';
-import { Sliders, Camera, Cpu, CheckCircle2, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-
-interface SystemSettings {
-  confidence_threshold: number;
-  unknown_sensitivity: string;
-  camera_source: string;
-  updated_at: string | null;
-}
-
-interface HardwareStatus {
-  cuda_available: boolean;
-  cuda_device_name: string | null;
-  cuda_device_count: number;
-  backend: string;
-  opencv_available: boolean;
-  torch_available: boolean;
-}
+import { useState } from 'react';
+import { Sliders, Camera, Cpu, CheckCircle2, AlertCircle, Loader2, RefreshCw, Server } from 'lucide-react';
+import { api, toApiError } from '../lib/api';
+import { API_URL } from '../lib/config';
+import { parseServerDate } from '../lib/format';
+import { useApiData } from '../hooks/useApiData';
+import { useSystemStatus } from '../hooks/useSystemStatus';
+import type { SystemSettings } from '../types/api';
 
 const CAMERA_SOURCES = [
   'Camera 01 (Overhead Station)',
@@ -24,87 +14,50 @@ const CAMERA_SOURCES = [
 ];
 
 export default function Settings() {
+  const { connection, status } = useSystemStatus();
+
   // ── Local form state (mirrors backend) ──────────────────────────────────
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(60);
   const [unknownSensitivity, setUnknownSensitivity] = useState<string>('Medium');
   const [cameraSource, setCameraSource] = useState<string>(CAMERA_SOURCES[0]);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   // ── Async state ──────────────────────────────────────────────────────────
-  const [loadingSettings, setLoadingSettings] = useState(true);
+  const settings = useApiData(() => api.getSettings());
+  const hardware = useApiData(() => api.getHardware());
+  const loadingSettings = settings.data === null;
+  const hardwareStatus = hardware.data;
+  const hardwareLoading = hardware.loading && !hardware.data;
   const [savingSettings, setSavingSettings] = useState(false);
-  const [hardwareStatus, setHardwareStatus] = useState<HardwareStatus | null>(null);
-  const [hardwareLoading, setHardwareLoading] = useState(true);
-  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<{ text: string; isError: boolean } | null>(null);
 
-  // ── Load settings from backend on mount ──────────────────────────────────
-  const loadSettings = async () => {
-    setLoadingSettings(true);
-    try {
-      const res = await fetch('http://localhost:8000/api/settings');
-      if (res.ok) {
-        const data: SystemSettings = await res.json();
-        setConfidenceThreshold(data.confidence_threshold);
-        setUnknownSensitivity(data.unknown_sensitivity);
-        setCameraSource(data.camera_source);
-        setSavedAt(data.updated_at);
-      }
-    } catch (err) {
-      console.error('Failed to load settings:', err);
-    } finally {
-      setLoadingSettings(false);
-    }
-  };
-
-  // ── Load hardware status ──────────────────────────────────────────────────
-  const loadHardware = async () => {
-    setHardwareLoading(true);
-    try {
-      const res = await fetch('http://localhost:8000/api/model/hardware');
-      if (res.ok) {
-        const data: HardwareStatus = await res.json();
-        setHardwareStatus(data);
-      }
-    } catch (err) {
-      console.error('Failed to load hardware status:', err);
-    } finally {
-      setHardwareLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadSettings();
-    loadHardware();
-  }, []);
+  // Copy freshly loaded backend settings into the form (adjusting state during render).
+  const [syncedFrom, setSyncedFrom] = useState<SystemSettings | null>(null);
+  if (settings.data && settings.data !== syncedFrom) {
+    setSyncedFrom(settings.data);
+    setConfidenceThreshold(settings.data.confidence_threshold);
+    setUnknownSensitivity(settings.data.unknown_sensitivity);
+    setCameraSource(settings.data.camera_source);
+    setSavedAt(settings.data.updated_at);
+  }
 
   // ── Save settings to backend ─────────────────────────────────────────────
   const handleSave = async () => {
     setSavingSettings(true);
     setSaveResult(null);
     try {
-      const res = await fetch('http://localhost:8000/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          confidence_threshold: confidenceThreshold,
-          unknown_sensitivity: unknownSensitivity,
-          camera_source: cameraSource,
-        }),
+      const data = await api.updateSettings({
+        confidence_threshold: confidenceThreshold,
+        unknown_sensitivity: unknownSensitivity,
+        camera_source: cameraSource,
       });
-
-      if (res.ok) {
-        const data: SystemSettings = await res.json();
-        setSavedAt(data.updated_at);
-        setSaveResult({
-          text: `Settings saved and applied to the live pipeline at ${new Date().toLocaleTimeString()}.`,
-          isError: false,
-        });
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setSaveResult({ text: err.detail || 'Failed to save settings.', isError: true });
-      }
-    } catch {
-      setSaveResult({ text: 'Backend offline — settings not saved.', isError: true });
+      setSavedAt(data.updated_at);
+      setSaveResult({
+        text: `Settings saved and applied to the live pipeline at ${new Date().toLocaleTimeString()}.`,
+        isError: false,
+      });
+    } catch (err) {
+      setSaveResult({ text: `Settings not saved: ${toApiError(err).message}`, isError: true });
     } finally {
       setSavingSettings(false);
       setTimeout(() => setSaveResult(null), 6000);
@@ -114,7 +67,7 @@ export default function Settings() {
   const formatDate = (iso: string | null) => {
     if (!iso) return null;
     try {
-      return new Date(iso).toLocaleString();
+      return parseServerDate(iso).toLocaleString();
     } catch {
       return iso;
     }
@@ -167,7 +120,13 @@ export default function Settings() {
 
           {loadingSettings ? (
             <div className="flex items-center gap-2 text-sm text-brand-secondary py-4">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading saved settings…
+              {settings.error ? (
+                <span>{settings.error.kind === 'offline' ? 'Waiting for the backend…' : settings.error.message}</span>
+              ) : (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading saved settings…
+                </>
+              )}
             </div>
           ) : (
             <>
@@ -247,7 +206,7 @@ export default function Settings() {
               disabled={loadingSettings}
               className="w-full bg-ice-blue border border-soft-blue rounded-lg px-4 py-2.5 text-sm font-medium text-deep-blue focus:outline-none focus:ring-2 focus:ring-sky-blue disabled:opacity-50"
             >
-              {CAMERA_SOURCES.map((src) => (
+              {Array.from(new Set([cameraSource, ...CAMERA_SOURCES])).map((src) => (
                 <option key={src}>{src}</option>
               ))}
             </select>
@@ -261,7 +220,7 @@ export default function Settings() {
                 Hardware Acceleration Status
               </div>
               <button
-                onClick={loadHardware}
+                onClick={hardware.reload}
                 disabled={hardwareLoading}
                 className="text-sky-blue hover:text-deep-blue transition-colors"
                 title="Refresh hardware status"
@@ -316,6 +275,39 @@ export default function Settings() {
               <p className="text-xs text-brand-alert">
                 Could not reach backend. Ensure FastAPI is running on port 8000.
               </p>
+            )}
+          </div>
+        </div>
+
+        {/* ── Connection & model status ─────────────────────────────────────── */}
+        <div className="bg-white p-6 rounded-2xl border border-soft-blue shadow-sm space-y-4 md:col-span-2">
+          <div className="flex items-center gap-3 border-b border-soft-blue pb-4">
+            <Server className="w-5 h-5 text-sky-blue" />
+            <h3 className="text-lg font-bold text-deep-blue">Connection &amp; AI Model Status</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-brand-secondary">API URL</span>
+              <span className="font-mono text-xs text-deep-blue">{API_URL}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-brand-secondary">Backend</span>
+              <span className={`font-bold ${connection === 'online' ? 'text-brand-success' : 'text-brand-alert'}`}>
+                {connection === 'online' ? `Connected (v${status?.version})` : connection === 'checking' ? 'Checking…' : 'Offline'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-brand-secondary">Person detector (YOLO pose)</span>
+              <span className={`font-bold ${status?.yolo_model ? 'text-brand-success' : 'text-brand-alert'}`}>
+                {status ? (status.yolo_model ? 'Ready' : 'Not loaded') : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-brand-secondary">Activity engine</span>
+              <span className="font-bold text-amber-700">{status?.activity_engine ?? '—'}</span>
+            </div>
+            {status?.model_error && (
+              <p className="md:col-span-2 text-xs text-brand-alert font-mono">{status.model_error}</p>
             )}
           </div>
         </div>

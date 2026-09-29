@@ -1,57 +1,33 @@
 import { useEffect, useState } from 'react';
 import ActivityTimeline from '../components/ActivityTimeline';
 import EventTable from '../components/EventTable';
-
-interface RecentEvent {
-  person_id: string;
-  activity: string;
-  confidence: number;
-  start_time: string;
-  end_time: string;
-  status: string;
-}
-
-interface StatusPayload {
-  type: string;
-  timestamp: string;
-  backend_online: boolean;
-  model_ready: boolean;
-  last_experiment_id: string | null;
-  last_experiment_name: string | null;
-  last_experiment_status: string | null;
-  recent_events: RecentEvent[];
-  live_detections: never[];
-  note: string;
-}
+import { api } from '../lib/api';
+import { MESSAGES } from '../lib/messages';
+import { confidencePct } from '../lib/format';
+import { useSystemStatus } from '../hooks/useSystemStatus';
+import type { LiveStatusPayload } from '../types/api';
 
 export default function LiveMonitor() {
-  const [status, setStatus] = useState<StatusPayload | null>(null);
+  const { online } = useSystemStatus();
+  const [status, setStatus] = useState<LiveStatusPayload | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
 
+  // (Re)connect whenever the backend is reachable; the socket closes itself when it goes away.
   useEffect(() => {
-    let ws: WebSocket | null = null;
-
-    try {
-      ws = new WebSocket('ws://localhost:8000/ws/live');
-      ws.onopen = () => setIsConnected(true);
-      ws.onmessage = (evt) => {
-        try {
-          const data: StatusPayload = JSON.parse(evt.data);
-          setStatus(data);
-        } catch (e) {
-          console.error('Error parsing WS message:', e);
-        }
-      };
-      ws.onclose = () => setIsConnected(false);
-      ws.onerror = () => setIsConnected(false);
-    } catch {
-      setIsConnected(false);
-    }
-
-    return () => {
-      if (ws) ws.close();
+    if (!online) return;
+    const ws = new WebSocket(api.liveSocketUrl());
+    ws.onopen = () => setIsConnected(true);
+    ws.onmessage = (evt) => {
+      try {
+        setStatus(JSON.parse(evt.data) as LiveStatusPayload);
+      } catch (e) {
+        console.error('Error parsing WS message:', e);
+      }
     };
-  }, []);
+    ws.onclose = () => setIsConnected(false);
+    ws.onerror = () => setIsConnected(false);
+    return () => ws.close();
+  }, [online]);
 
   const recentEvents = status?.recent_events || [];
 
@@ -71,8 +47,10 @@ export default function LiveMonitor() {
           <p className="font-bold text-lg text-sky-blue">BAS Real-Time Camera Stream</p>
           <p className="text-xs font-mono text-white/50">
             {status
-              ? `Backend: Online | Model: ${status.model_ready ? 'Ready' : 'Weights Missing'} | ${status.timestamp}`
-              : 'Awaiting connection…'}
+              ? `Backend: Online | Model: ${status.model_ready ? 'Ready' : 'Not ready'} | ${status.timestamp}`
+              : online
+                ? 'Connecting…'
+                : MESSAGES.backendOffline}
           </p>
           {status?.last_experiment_name && (
             <p className="text-xs font-mono text-white/40">
@@ -82,7 +60,7 @@ export default function LiveMonitor() {
           )}
           {!status?.model_ready && status && (
             <div className="mt-2 bg-red-900/40 border border-red-500/50 text-red-300 text-xs rounded-lg px-4 py-2 text-center max-w-sm">
-              ⚠ AI model weights are missing. Upload model files to <span className="font-mono">backend/weights/</span> to enable live inference.
+              ⚠ {MESSAGES.modelMissing}
             </div>
           )}
           <p className="text-[10px] text-white/20 mt-2">{status?.note}</p>
@@ -100,7 +78,7 @@ export default function LiveMonitor() {
             ) : (
               recentEvents.map((evt, idx) => {
                 const isUnknown = evt.activity === 'Unknown';
-                const confPct = Math.round(evt.confidence > 1 ? evt.confidence : evt.confidence * 100);
+                const confPct = confidencePct(evt.confidence);
                 return (
                   <div
                     key={idx}

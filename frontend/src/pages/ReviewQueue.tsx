@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Play, CheckCircle2, AlertCircle, VideoOff } from 'lucide-react';
+import { api, toApiError } from '../lib/api';
+import { confidencePct } from '../lib/format';
+import { useApiData } from '../hooks/useApiData';
+import { DataState } from '../components/StatusNotice';
+import type { ActivityEvent } from '../types/api';
 
 const ACTIVITIES = [
   'Standing',
@@ -11,62 +16,30 @@ const ACTIVITIES = [
   'Handling experimental equipment',
 ];
 
-interface EventItem {
-  id: string;
-  person_id: string;
-  activity_type: string;
-  start_time: string;
-  end_time: string;
-  start_seconds: number | null;
-  end_seconds: number | null;
-  confidence: number;
-  status: string;
-  video_id: string | null;
-  experiment_id: string;
-}
-
 export default function ReviewQueue() {
-  const [queue, setQueue] = useState<EventItem[]>([]);
-  const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
+  const { data: events, error, loading, reload } = useApiData(() => api.getEvents());
+  const queue = useMemo(
+    () => (events ?? []).filter((e) => e.status === 'Review' || e.activity_type === 'Unknown'),
+    [events],
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedEvent = queue.find((e) => e.id === selectedId) ?? queue[0] ?? null;
   const [selectedActivity, setSelectedActivity] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<{ text: string; isError: boolean } | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // ── Fetch pending review events ──────────────────────────────────────────
-  const fetchEvents = async () => {
-    try {
-      const res = await fetch('http://localhost:8000/events/');
-      if (res.ok) {
-        const data: EventItem[] = await res.json();
-        const pending = data.filter(
-          (e) => e.status === 'Review' || e.activity_type === 'Unknown'
-        );
-        setQueue(pending);
-        if (pending.length > 0) {
-          setSelectedEvent(pending[0]);
-        } else {
-          setSelectedEvent(null);
-        }
-      } else {
-        setQueue([]);
-        setSelectedEvent(null);
-      }
-    } catch {
-      setQueue([]);
-      setSelectedEvent(null);
-    }
-  };
-
-  useEffect(() => {
-    fetchEvents();
-  }, []);
-
   // ── Video seek when selected event changes ───────────────────────────────
-  useEffect(() => {
+  // Reset player state when the selection changes (done during render, not in an effect).
+  const [shownEventId, setShownEventId] = useState<string | null>(null);
+  if ((selectedEvent?.id ?? null) !== shownEventId) {
+    setShownEventId(selectedEvent?.id ?? null);
     setVideoError(null);
-    setVideoLoading(false);
+    setVideoLoading(!!selectedEvent);
+  }
+
+  useEffect(() => {
     if (!selectedEvent) return;
 
     const video = videoRef.current;
@@ -75,8 +48,7 @@ export default function ReviewQueue() {
     const videoId = selectedEvent.video_id || selectedEvent.experiment_id;
     const seekTo = selectedEvent.start_seconds ?? 0;
 
-    setVideoLoading(true);
-    video.src = `http://localhost:8000/api/videos/${videoId}`;
+    video.src = api.videoUrl(videoId);
     video.load();
 
     const onLoaded = () => {
@@ -98,11 +70,11 @@ export default function ReviewQueue() {
   }, [selectedEvent]);
 
   // ── Play just the event clip ─────────────────────────────────────────────
-  const handlePlayClip = () => {
+  const handlePlayClip = (evt: ActivityEvent | null = selectedEvent) => {
     const video = videoRef.current;
-    if (!video || !selectedEvent) return;
-    const endAt = selectedEvent.end_seconds ?? (selectedEvent.start_seconds ?? 0) + 5;
-    video.currentTime = selectedEvent.start_seconds ?? 0;
+    if (!video || !evt) return;
+    const endAt = evt.end_seconds ?? (evt.start_seconds ?? 0) + 5;
+    video.currentTime = evt.start_seconds ?? 0;
 
     const stopAtEnd = () => {
       if (video.currentTime >= endAt) {
@@ -121,38 +93,23 @@ export default function ReviewQueue() {
     if (!selectedEvent || !selectedActivity) return;
 
     try {
-      const res = await fetch(
-        `http://localhost:8000/events/${selectedEvent.id}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ activity_type: selectedActivity }),
-        }
-      );
-
-      if (res.ok) {
-        setStatusMessage({
-          text: `Event "${selectedEvent.id.slice(0, 8)}…" reclassified as "${selectedActivity}".`,
-          isError: false,
-        });
-        setSelectedActivity('');
-        await fetchEvents();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setStatusMessage({
-          text: err.detail || 'Failed to update classification.',
-          isError: true,
-        });
-      }
-    } catch {
-      setStatusMessage({ text: 'Backend offline — cannot update classification.', isError: true });
+      await api.reclassifyEvent(selectedEvent.id, selectedActivity);
+      setStatusMessage({
+        text: `Event "${selectedEvent.id.slice(0, 8)}…" reclassified as "${selectedActivity}".`,
+        isError: false,
+      });
+      setSelectedActivity('');
+      setSelectedId(null);
+      reload();
+    } catch (err) {
+      setStatusMessage({ text: toApiError(err).message, isError: true });
     }
 
     // Auto-clear status after 5 s
     setTimeout(() => setStatusMessage(null), 5000);
   };
 
-  const confPct = (c: number) => Math.round(c > 1 ? c : c * 100);
+  const confPct = confidencePct;
 
   return (
     <div className="space-y-6">
@@ -188,18 +145,20 @@ export default function ReviewQueue() {
         <div className="space-y-4">
           <h3 className="text-lg font-bold text-deep-blue">Pending Events</h3>
 
-          {queue.length === 0 ? (
-            <div className="bg-white rounded-xl p-6 border border-soft-blue text-center text-sm text-brand-secondary">
-              No events pending review. All activity detections are confirmed.
-            </div>
-          ) : (
-            queue.map((item) => {
+          <DataState
+            loading={loading}
+            error={error}
+            isEmpty={queue.length === 0}
+            onRetry={reload}
+            emptyMessage="No events pending review. Unknown and low-confidence events appear here after processing."
+          >
+            {queue.map((item) => {
               const isSelected = selectedEvent?.id === item.id;
               return (
                 <div
                   key={item.id}
                   onClick={() => {
-                    setSelectedEvent(item);
+                    setSelectedId(item.id);
                     setSelectedActivity('');
                     setStatusMessage(null);
                   }}
@@ -239,9 +198,9 @@ export default function ReviewQueue() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setSelectedEvent(item);
+                      setSelectedId(item.id);
                       setSelectedActivity('');
-                      setTimeout(handlePlayClip, 300);
+                      setTimeout(() => handlePlayClip(item), 300);
                     }}
                     className="w-full flex items-center justify-center gap-2 bg-ice-blue hover:bg-soft-blue text-deep-blue font-medium py-2 rounded-lg transition-colors text-xs"
                   >
@@ -250,8 +209,8 @@ export default function ReviewQueue() {
                   </button>
                 </div>
               );
-            })
-          )}
+            })}
+          </DataState>
         </div>
 
         {/* ── Right: Video + classifier ─────────────────────────────────────── */}
@@ -292,7 +251,7 @@ export default function ReviewQueue() {
 
                 {!videoError && !videoLoading && (
                   <button
-                    onClick={handlePlayClip}
+                    onClick={() => handlePlayClip()}
                     className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 bg-sky-blue hover:bg-[#2CA1D9] text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow transition-colors"
                   >
                     <Play className="w-3.5 h-3.5" />

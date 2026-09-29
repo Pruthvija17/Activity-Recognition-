@@ -1,27 +1,14 @@
 import { useState, type ChangeEvent } from 'react';
-import { UploadCloud, FileVideo, PlusCircle, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-
-interface UploadResponse {
-  video_id: string;
-  filename: string;
-  file_size: number;
-  status: string;
-}
-
-interface ProcessResponse {
-  video_id: string;
-  status: string;
-  events_count: number;
-  results: Array<{
-    person_id: string;
-    activity: string;
-    confidence: number;
-    start: string;
-    end: string;
-  }>;
-}
+import { UploadCloud, FileVideo, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { api, toApiError } from '../lib/api';
+import { MESSAGES } from '../lib/messages';
+import { confidencePct, formatBytes } from '../lib/format';
+import { useSystemStatus } from '../hooks/useSystemStatus';
+import type { ProcessResponse, UploadResponse } from '../types/api';
 
 export default function Experiments() {
+  const { online, status } = useSystemStatus();
+  const modelReady = online && !!status?.model_ready;
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -73,31 +60,14 @@ export default function Experiments() {
     setUploadedData(null);
     setProcessData(null);
 
-    // 1. Upload Video Pipeline
+    // 1. Upload
     let uploadRes: UploadResponse;
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const response = await fetch('http://localhost:8000/api/videos/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Upload failed with status code ${response.status}`);
-      }
-
-      uploadRes = await response.json();
+      uploadRes = await api.uploadVideo(file);
       setUploadedData(uploadRes);
-    } catch (error: any) {
+    } catch (err) {
       setUploading(false);
-      if (error instanceof TypeError || error.message.includes('Failed to fetch')) {
-        setErrorMessage('Backend server is unavailable. Please ensure FastAPI is running on http://localhost:8000.');
-      } else {
-        setErrorMessage(error.message || 'Upload failed due to a server error.');
-      }
+      setErrorMessage(toApiError(err).message);
       return;
     }
 
@@ -106,24 +76,20 @@ export default function Experiments() {
     // 2. Process Video using returned video_id
     setProcessing(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/videos/process/${uploadRes.video_id}`, {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Processing failed with status code ${response.status}`);
-      }
-
-      const result: ProcessResponse = await response.json();
+      const result = await api.processVideo(uploadRes.video_id);
       setProcessData(result);
-      setSuccessMessage(`Video processing completed successfully for Video ID: ${result.video_id}! Detected ${result.events_count} activity events.`);
-    } catch (error: any) {
-      if (error instanceof TypeError || error.message.includes('Failed to fetch')) {
-        setErrorMessage('Backend server disconnected during video processing.');
-      } else {
-        setErrorMessage(`Processing failure: ${error.message}`);
-      }
+      setSuccessMessage(
+        result.events_count > 0
+          ? `Processing complete for ${result.video_id}: ${result.events_count} activity events detected.`
+          : `Processing complete for ${result.video_id}, but no people were detected, so no activity events were produced.`,
+      );
+    } catch (err) {
+      const e = toApiError(err);
+      setErrorMessage(
+        e.kind === 'offline'
+          ? 'Lost connection to the backend during processing. Check that it is still running.'
+          : `${MESSAGES.processingFailed} (${e.message})`,
+      );
     } finally {
       setProcessing(false);
     }
@@ -133,10 +99,6 @@ export default function Experiments() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-deep-blue">Experiments</h1>
-        <button className="flex items-center gap-2 bg-sky-blue hover:bg-[#2CA1D9] text-white font-bold px-4 py-2 rounded-lg transition-colors shadow-sm">
-          <PlusCircle className="w-5 h-5" />
-          New Experiment
-        </button>
       </div>
 
       <div className="bg-white rounded-2xl p-8 border border-soft-blue shadow-sm space-y-6">
@@ -170,14 +132,15 @@ export default function Experiments() {
               <FileVideo className="w-6 h-6 text-sky-blue" />
               <div>
                 <p className="text-sm font-medium text-brand-primary">{file.name}</p>
-                <p className="text-xs text-brand-secondary">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                <p className="text-xs text-brand-secondary">{formatBytes(file.size)}</p>
               </div>
             </div>
             <button 
               onClick={handleProcessVideo}
-              disabled={uploading || processing}
+              disabled={uploading || processing || !modelReady}
+              title={!modelReady ? (online ? MESSAGES.modelMissing : MESSAGES.backendOffline) : undefined}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold text-white shadow-sm transition-colors ${
-                uploading || processing ? 'bg-brand-secondary cursor-not-allowed' : 'bg-brand-success hover:bg-green-600'
+                uploading || processing || !modelReady ? 'bg-brand-secondary cursor-not-allowed' : 'bg-brand-success hover:bg-green-600'
               }`}
             >
               {(uploading || processing) && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -206,7 +169,7 @@ export default function Experiments() {
               <p className="text-sm text-green-700">{successMessage}</p>
               {uploadedData && (
                 <p className="text-xs text-green-600 mt-1">
-                  Video ID: <span className="font-mono font-bold">{uploadedData.video_id}</span> | Saved file: {uploadedData.filename} ({(uploadedData.file_size / (1024 * 1024)).toFixed(2)} MB)
+                  Video ID: <span className="font-mono font-bold">{uploadedData.video_id}</span> | Saved file: {uploadedData.filename} ({formatBytes(uploadedData.file_size)})
                 </p>
               )}
             </div>
@@ -223,7 +186,7 @@ export default function Experiments() {
                   <span className="font-medium text-brand-primary">{evt.person_id}</span>
                   <span className="bg-ice-blue px-2.5 py-1 rounded text-sky-blue font-semibold">{evt.activity}</span>
                   <span className="text-xs text-brand-secondary">{evt.start} - {evt.end}</span>
-                  <span className="text-xs font-mono text-gray-500">{(evt.confidence * 100).toFixed(0)}% conf</span>
+                  <span className="text-xs font-mono text-gray-500">{confidencePct(evt.confidence)}% conf</span>
                 </div>
               ))}
             </div>

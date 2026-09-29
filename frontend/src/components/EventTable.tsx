@@ -1,37 +1,12 @@
-import { useEffect, useState } from 'react';
 import { CheckCircle2, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
-
-interface EventItem {
-  id: string;
-  person_id: string;
-  activity_type: string;
-  start_time: string;
-  end_time: string;
-  duration: number;
-  confidence: number;
-  status: string;
-}
+import { api } from '../lib/api';
+import { confidencePct } from '../lib/format';
+import { useApiData } from '../hooks/useApiData';
 
 export default function EventTable() {
-  const [events, setEvents] = useState<EventItem[]>([]);
-
-  useEffect(() => {
-    const loadEvents = async () => {
-      try {
-        const res = await fetch('http://localhost:8000/events/');
-        if (res.ok) {
-          const data: EventItem[] = await res.json();
-          setEvents(data);
-        } else {
-          setEvents([]);
-        }
-      } catch {
-        setEvents([]);
-      }
-    };
-    loadEvents();
-  }, []);
+  const { data, error } = useApiData(() => api.getEvents());
+  const events = data ?? [];
 
   return (
     <div className="bg-white rounded-2xl border border-soft-blue shadow-sm overflow-hidden">
@@ -59,12 +34,14 @@ export default function EventTable() {
             {events.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-6 py-8 text-center text-brand-secondary text-xs">
-                  No activity events logged yet. Upload and process a video experiment to generate activity logs.
+                  {error && !data
+                    ? error.message
+                    : 'No activity events logged yet. Upload and process a video experiment to generate activity logs.'}
                 </td>
               </tr>
             ) : (
               events.map((event) => {
-                const confPct = Math.round(event.confidence > 1 ? event.confidence : event.confidence * 100);
+                const confPct = confidencePct(event.confidence);
                 return (
                   <tr key={event.id} className="hover:bg-ice-blue/30 transition-colors">
                     <td className="px-6 py-4 font-medium">{event.person_id}</td>

@@ -79,11 +79,12 @@ frontend/src/
 - **Verify:** fresh terminal → script → `/health` ok; frontend header shows Connected.
 - **Result:** startup ~2 s; `/health` and `/api/system/status` verified; foreign CORS origins rejected; stuck job marked failed on restart; starting from the broken `backend/venv` now boots and reports `missing_packages: [opencv, ultralytics]` instead of crashing. Found that `localhost` resolves to `::1` first while uvicorn binds IPv4 → frontend will target `127.0.0.1:8000` (M2).
 
-### M2 — Frontend API config (P0)
+### M2 — Frontend API config (P0) — ✅ done
 - `VITE_API_URL` in `frontend/.env` (+ `.env.example`); all fetches through `lib/api.ts`; WS URL derived from it.
 - `useSystemStatus` hook polls `/api/system/status`; header shows Backend / AI engine / DB honestly. Remove "Demo Mode" badge; show "Rule-based baseline" or "Trained model" instead.
 - Shared page states: backend unavailable, model missing, no data, processing failed (texts from plan §21).
 - **Verify:** grep finds zero `localhost:8000` outside config; stop backend → every page shows the offline state; start → recovers without reload.
+- **Result:** single `lib/config.ts` + typed `lib/api.ts`; zero hardcoded URLs elsewhere. Header pills (Backend / Database / AI Models) and engine badge come from `/api/system/status`; "Demo Mode" badge, dead "New Experiment" button and hardcoded dashboard claims removed. Verified in browser: offline banner + "Waiting for the backend…", automatic recovery without reload, Settings save round-trip. Also fixed: timeline axis/bars now scaled to real event times, Review Queue clip playback used the previously selected event, CSV cells not escaped, UTC timestamps shown as local time, page title. tsc + oxlint clean (was 4 warnings).
 
 ### M3 — Upload + async processing (P0)
 - `POST /api/videos/upload`: mp4/avi/mov (+webm), 500 MB streaming limit, extension **and** OpenCV open check (reject corrupt/non-video), returns `{video_id, filename, file_size, status:"uploaded"}`.

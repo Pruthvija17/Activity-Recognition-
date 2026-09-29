@@ -1,44 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Download, Printer, FileSpreadsheet, FileCheck } from 'lucide-react';
+import { api, toApiError } from '../lib/api';
+import { useApiData } from '../hooks/useApiData';
+import { DataState, StatusNotice } from '../components/StatusNotice';
 
-interface ReportItem {
-  id: string;
-  experiment_id: string;
-  experiment: string;
-  date: string;
-  events_count: number;
-  confirmed_count: number;
-  unknown_count: number;
-  deviations: number;
-  avg_confidence_pct: number;
-  status: string;
-}
+const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 export default function Reports() {
-  const [reports, setReports] = useState<ReportItem[]>([]);
-
-  useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const res = await fetch('http://localhost:8000/api/reports');
-        if (res.ok) {
-          const data = await res.json();
-          setReports(data);
-        }
-      } catch (err) {
-        console.error('Failed to fetch reports:', err);
-      }
-    };
-    fetchReports();
-  }, []);
+  const { data, error, loading, reload } = useApiData(() => api.getReports());
+  const reports = data ?? [];
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const downloadCSV = async (expId: string) => {
+    setDownloadError(null);
     try {
-      const res = await fetch(`http://localhost:8000/api/reports/${expId}/csv`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const rows: string[][] = data.rows || [];
-      const csvStr = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+      const csv = await api.getReportCsv(expId);
+      const csvStr = (csv.rows || []).map((r) => r.map(csvCell).join(',')).join('\n');
       const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -47,8 +24,9 @@ export default function Reports() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('CSV download error:', err);
+      setDownloadError(`CSV export failed: ${toApiError(err).message}`);
     }
   };
 
@@ -60,7 +38,7 @@ export default function Reports() {
     <div className="space-y-6">
       <div className="flex items-center justify-between print:hidden">
         <h1 className="text-2xl font-bold text-deep-blue">Automated Experiment Reports</h1>
-        <button 
+        <button
           onClick={handlePrint}
           className="flex items-center gap-2 bg-white border border-soft-blue text-deep-blue font-medium px-4 py-2 rounded-lg hover:bg-ice-blue transition-colors shadow-sm text-sm"
         >
@@ -69,13 +47,17 @@ export default function Reports() {
         </button>
       </div>
 
+      {downloadError && <StatusNotice tone="error">{downloadError}</StatusNotice>}
+
       <div className="grid grid-cols-1 gap-6">
-        {reports.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-soft-blue shadow-sm p-6 text-center text-sm text-brand-secondary">
-            No experiment reports found. Process an experiment video to generate reports.
-          </div>
-        ) : (
-          reports.map((rep) => (
+        <DataState
+          loading={loading}
+          error={error}
+          isEmpty={reports.length === 0}
+          onRetry={reload}
+          emptyMessage="No experiment reports found. Process an experiment video to generate reports."
+        >
+          {reports.map((rep) => (
             <div key={rep.id} className="bg-white rounded-2xl border border-soft-blue shadow-sm p-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between border-b border-soft-blue pb-4 gap-4">
                 <div>
@@ -87,14 +69,14 @@ export default function Reports() {
                 </div>
 
                 <div className="flex items-center gap-3 print:hidden">
-                  <button 
+                  <button
                     onClick={() => downloadCSV(rep.experiment_id)}
                     className="flex items-center gap-2 bg-ice-blue hover:bg-soft-blue text-deep-blue font-medium px-3 py-1.5 rounded-lg text-xs transition-colors"
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5 text-brand-success" />
                     Export CSV
                   </button>
-                  <button 
+                  <button
                     onClick={handlePrint}
                     className="flex items-center gap-2 bg-sky-blue hover:bg-[#2CA1D9] text-white font-medium px-3 py-1.5 rounded-lg text-xs transition-colors shadow-sm"
                   >
@@ -125,8 +107,8 @@ export default function Reports() {
                 </div>
               </div>
             </div>
-          ))
-        )}
+          ))}
+        </DataState>
       </div>
     </div>
   );
