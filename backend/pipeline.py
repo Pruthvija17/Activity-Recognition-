@@ -4,19 +4,29 @@ Uses Ultralytics YOLO pose for person detection/keypoints and a transparent
 pose-based heuristic classifier. It keeps the AIVideoPipeline API expected by
 main.py. It is a baseline, not a trained SIH26174 seven-class model.
 """
-import os, math, json
+import os, math, json, logging, shutil
 from collections import defaultdict, deque
 from typing import Any, Dict, List
-import cv2
 
+from config import WEIGHTS_DIR, MODEL_CONFIG_PATH, POSE_WEIGHTS_NAME, POSE_WEIGHTS_PATH
+
+log = logging.getLogger("bas.pipeline")
+
+# Optional heavy dependencies: a missing package must be reported via the
+# status endpoint, not crash the whole API on import.
+IMPORT_ERRORS: Dict[str, str] = {}
+try:
+    import cv2
+except Exception as e:  # pragma: no cover - depends on environment
+    cv2 = None
+    IMPORT_ERRORS["opencv"] = str(e)
 try:
     from ultralytics import YOLO
-except Exception:
+except Exception as e:  # pragma: no cover - depends on environment
     YOLO = None
+    IMPORT_ERRORS["ultralytics"] = str(e)
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-WEIGHTS = os.path.join(BASE, "weights")
-CONFIG = os.path.join(WEIGHTS, "model_config.json")
+ENGINE_NAME = "Rule-based pose baseline"
 ACTIVITIES = ["Standing", "Sitting", "Walking", "Reaching",
               "Picking up an object", "Placing an object",
               "Handling experimental equipment"]
@@ -46,41 +56,55 @@ class AIVideoPipeline:
     def __init__(self):
         self.model=None; self.model_loaded=False; self.model_ready=False
         self.detector_loaded=False; self.classifier_loaded=False
+        self.load_error=None
         self._confidence_threshold=.60; self._unknown_sensitivity="Medium"
         self.config={}
-        if os.path.exists(CONFIG):
+        if os.path.exists(MODEL_CONFIG_PATH):
             try:
-                with open(CONFIG,encoding="utf-8") as f: self.config=json.load(f)
-            except Exception: pass
+                with open(MODEL_CONFIG_PATH,encoding="utf-8") as f: self.config=json.load(f)
+            except Exception as e:
+                log.warning("Could not read %s: %s", MODEL_CONFIG_PATH, e)
         self.load_models()
 
     def get_model_status(self):
-        pose=os.path.join(WEIGHTS,"yolo11n-pose.pt")
         return {
             "model_ready":self.model_ready,
             "detector_ready":self.detector_loaded,
             "classifier_ready":self.classifier_loaded,
             "baseline_mode":True,
-            "classifier_type":"YOLO pose + heuristic baseline",
-            "weights_directory":WEIGHTS,
-            "files":{"pose_model":{"path":pose,"exists":os.path.exists(pose)}},
+            "engine":ENGINE_NAME,
+            "classifier_type":"YOLO pose keypoints + rule-based activity baseline (no trained activity model)",
+            "weights_directory":WEIGHTS_DIR,
+            "files":{"pose_model":{"path":POSE_WEIGHTS_PATH,"exists":os.path.exists(POSE_WEIGHTS_PATH)}},
+            "import_errors":IMPORT_ERRORS,
+            "load_error":self.load_error,
             "activities":self.SUPPORTED_ACTIVITIES,
-            "instructions":"This version uses a pose-based baseline because the supplied project has no trained activity_cnn.pt."
+            "instructions":("Activity labels come from a rule-based baseline on pose keypoints. "
+                            "A trained temporal model will be used automatically once its weights exist."),
         }
 
     def load_models(self):
-        if YOLO is None:
-            print("[Pipeline] ultralytics is not installed."); return
-        os.makedirs(WEIGHTS,exist_ok=True)
-        local=os.path.join(WEIGHTS,"yolo11n-pose.pt")
-        source=local if os.path.exists(local) else "yolo11n-pose.pt"
+        if IMPORT_ERRORS:
+            self.load_error="Missing Python packages: "+", ".join(sorted(IMPORT_ERRORS))+". Run: pip install -r backend/requirements.txt"
+            log.error(self.load_error); return
+        if not os.path.exists(POSE_WEIGHTS_PATH):
+            # Let ultralytics fetch the official weights once, then keep them in weights/.
+            log.warning("Pose weights not found at %s; attempting one-time download of %s", POSE_WEIGHTS_PATH, POSE_WEIGHTS_NAME)
+            try:
+                YOLO(POSE_WEIGHTS_NAME)
+                if os.path.exists(POSE_WEIGHTS_NAME) and not os.path.exists(POSE_WEIGHTS_PATH):
+                    shutil.move(POSE_WEIGHTS_NAME, POSE_WEIGHTS_PATH)
+            except Exception as e:
+                self.load_error=f"Pose model {POSE_WEIGHTS_NAME} missing from {WEIGHTS_DIR} and download failed: {e}"
+                log.error(self.load_error); return
         try:
-            print("[Pipeline] Loading:",source)
-            self.model=YOLO(source)
+            log.info("Loading pose model: %s", POSE_WEIGHTS_PATH)
+            self.model=YOLO(POSE_WEIGHTS_PATH)
             self.model_loaded=self.detector_loaded=self.classifier_loaded=self.model_ready=True
-            print("[Pipeline] YOLO pose loaded; baseline activity engine ready.")
+            log.info("Pose model loaded; %s ready.", ENGINE_NAME)
         except Exception as e:
-            print("[Pipeline] Model load error:",e)
+            self.load_error=f"Pose model failed to load: {e}"
+            log.error(self.load_error)
 
     def update_thresholds(self, confidence_threshold:int, unknown_sensitivity:str):
         self._confidence_threshold=max(.5,min(.95,float(confidence_threshold)/100))
@@ -146,7 +170,7 @@ class AIVideoPipeline:
         if not os.path.exists(path):
             return {"model_ready":False,"events":[],"metadata":{},"message":"Video file not found."}
         if not self.model_ready:
-            return {"model_ready":False,"events":[],"metadata":{},"message":"YOLO pose model could not be loaded. Install ultralytics and allow its first-run model download."}
+            return {"model_ready":False,"events":[],"metadata":{},"message":self.load_error or "Pose model is not loaded."}
         meta=self.get_video_metadata(path); fps=meta["fps"] or 30; every=max(1,round(fps/10))
         hist=defaultdict(lambda:deque(maxlen=15)); preds=defaultdict(list); frame=0; detections=0
         try:
@@ -167,6 +191,7 @@ class AIVideoPipeline:
                     detections+=1
                 frame+=1
         except Exception as e:
+            log.exception("Video processing failed for %s", path)
             return {"model_ready":True,"events":[],"metadata":meta,"message":f"Video processing failed: {e}"}
 
         events=[]
@@ -191,5 +216,5 @@ class AIVideoPipeline:
         events.sort(key=lambda e:(e["start_seconds"],e["person_id"]))
         return {"model_ready":True,"events":events,
                 "metadata":{**meta,"sample_every_frames":every,"detections":detections,
-                             "activity_engine":"YOLO pose + heuristic baseline"},
+                             "activity_engine":ENGINE_NAME},
                 "message":f"Processing complete. Generated {len(events)} activity events using the pose-based baseline."}

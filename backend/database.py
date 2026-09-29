@@ -1,9 +1,13 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
+import logging
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "bas_ai.db")
+from config import DB_PATH
+
+log = logging.getLogger("bas.database")
+
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(
@@ -14,11 +18,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 def migrate_db():
-    db_path = os.path.join(os.path.dirname(__file__), "bas_ai.db")
-    if not os.path.exists(db_path):
+    if not os.path.exists(DB_PATH):
         return
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     # Check tables
@@ -67,6 +70,17 @@ def migrate_db():
 
 # Run migration on import
 migrate_db()
+
+
+def check_db() -> bool:
+    """Return True if the database answers a trivial query."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception as e:
+        log.error("Database check failed: %s", e)
+        return False
 
 def get_db():
     db = SessionLocal()

@@ -2,9 +2,10 @@
 BAS Activity Intelligence – FastAPI Backend
 Port: 8000
 """
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Body
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
@@ -14,26 +15,23 @@ import uuid
 import time
 import asyncio
 import datetime
+import logging
+
+import config
+config.setup_logging()
+log = logging.getLogger("bas.api")
 
 import models
 import schemas
-from database import engine, get_db, SessionLocal
+from database import engine, get_db, SessionLocal, check_db
 import pipeline
+
+API_VERSION = "2.1.0"
 
 # ── DB Init ───────────────────────────────────────────────────────────────────
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="BAS Activity Intelligence API", version="2.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ── Pipeline ──────────────────────────────────────────────────────────────────
+# ── Pipeline (models are loaded once, here) ───────────────────────────────────
 ai_pipeline = pipeline.AIVideoPipeline()
 
 # ── Startup: apply saved settings to pipeline ─────────────────────────────────
@@ -50,11 +48,62 @@ def _apply_saved_settings():
             db.refresh(settings)
         ai_pipeline.update_thresholds(settings.confidence_threshold, settings.unknown_sensitivity)
     except Exception as e:
-        print(f"[Settings] Could not load saved settings: {e}")
+        log.error("Could not load saved settings: %s", e)
     finally:
         db.close()
 
-_apply_saved_settings()
+
+def _recover_interrupted_jobs():
+    """Experiments left mid-processing by a crash/restart can never finish; mark them failed."""
+    db = SessionLocal()
+    try:
+        stuck = db.query(models.Experiment).filter(
+            models.Experiment.status.in_(["processing", "queued"])
+        ).all()
+        for exp in stuck:
+            exp.status = "failed"
+            log.warning("Experiment %s was interrupted by a restart; marked failed.", exp.id)
+        db.commit()
+    except Exception as e:
+        log.error("Could not recover interrupted jobs: %s", e)
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _apply_saved_settings()
+    _recover_interrupted_jobs()
+    status = ai_pipeline.get_model_status()
+    log.info(
+        "BAS AI API %s started | database=%s | pose_model=%s | engine=%s",
+        API_VERSION, "ok" if check_db() else "ERROR",
+        "ready" if status["detector_ready"] else "NOT READY", status["engine"],
+    )
+    if ai_pipeline.load_error:
+        log.error("AI pipeline not ready: %s", ai_pipeline.load_error)
+    yield
+
+
+app = FastAPI(title="BAS Activity Intelligence API", version=API_VERSION, lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Log full details server-side; never leak stack traces to the UI."""
+    log.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error. Check the backend logs for details."},
+    )
 
 # In-memory index of uploaded videos for quick lookup within a session
 uploaded_videos: dict = {}
@@ -62,8 +111,7 @@ uploaded_videos: dict = {}
 ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov"}
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 
-UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-os.makedirs(UPLOADS_DIR, exist_ok=True)
+UPLOADS_DIR = config.UPLOADS_DIR
 
 # Activity colours for analytics charts
 ACTIVITY_COLORS = {
@@ -130,15 +178,34 @@ def _ensure_participant(db: Session, experiment_id: str, person_id_label: str) -
 
 @app.get("/")
 def read_root():
-    return {"message": "BAS Activity Intelligence API is running", "version": "2.0.0"}
+    return {"message": "BAS Activity Intelligence API is running", "version": API_VERSION}
 
 
 @app.get("/health")
 def health_check():
+    """Liveness probe: answers as long as the API process is serving requests."""
+    return {"status": "ok"}
+
+
+@app.get("/api/system/status")
+def system_status():
+    """Readiness of every component. A missing component reports false; it never crashes the API."""
+    hw = hardware_status()
+    model = ai_pipeline.get_model_status()
     return {
-        "status": "ok",
-        "model_ready": ai_pipeline.model_ready,
-        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "backend": True,
+        "version": API_VERSION,
+        "database": check_db(),
+        "yolo_model": model["detector_ready"],
+        "activity_model": model["classifier_ready"],
+        "trained_activity_model": False,
+        "activity_engine": model["engine"],
+        "model_ready": model["model_ready"],
+        "model_error": model["load_error"],
+        "missing_packages": sorted(model["import_errors"].keys()),
+        "cuda": hw.cuda_available,
+        "device": hw.cuda_device_name or "CPU",
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
     }
 
 
@@ -263,6 +330,7 @@ async def upload_video_file(file: UploadFile = File(...), db: Session = Depends(
     except HTTPException:
         raise
     except Exception as e:
+        log.exception("Upload failed for %s", file.filename)
         if os.path.exists(save_path):
             os.remove(save_path)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
@@ -277,6 +345,7 @@ async def upload_video_file(file: UploadFile = File(...), db: Session = Depends(
     db.add(db_experiment)
     db.commit()
 
+    log.info("Uploaded %s as %s (%.1f MB)", file.filename, video_id, file_size / 1e6)
     uploaded_videos[video_id] = {
         "video_id": video_id,
         "filename": file.filename,
@@ -307,7 +376,10 @@ async def process_video_by_id(video_id: str, db: Session = Depends(get_db)):
     db.commit()
 
     # Run pipeline
+    log.info("Processing started: %s", video_id)
+    t0 = time.time()
     result = ai_pipeline.process_video(file_path)
+    log.info("Processing finished: %s in %.1fs — %s", video_id, time.time() - t0, result.get("message", ""))
     model_ready = result.get("model_ready", False)
     message = result.get("message", "")
 

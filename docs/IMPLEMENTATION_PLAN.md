@@ -68,7 +68,7 @@ frontend/src/
 
 ## 5. Milestones (in order; each ends in a verifiable state)
 
-### M1 — Backend runs reliably (P0)
+### M1 — Backend runs reliably (P0) — ✅ done
 - Fix `requirements.txt` (pinned to versions already working in `.venv`) + `reportlab`.
 - Move `yolo11n-pose.pt` → `backend/weights/`; loader checks there first.
 - `GET /health` → `{"status":"ok"}`; `GET /api/system/status` → backend / pose model / activity engine (rules|gru) / database / cuda booleans + engine name. Missing component reports `false`, never crashes.
@@ -77,6 +77,7 @@ frontend/src/
 - Structured logging (`logging`, not `print`) for startup, model load, upload, jobs, inference, DB and API errors; users get clean messages, no stack traces.
 - Start scripts: `start-backend.ps1`, `start-frontend.ps1`, README.
 - **Verify:** fresh terminal → script → `/health` ok; frontend header shows Connected.
+- **Result:** startup ~2 s; `/health` and `/api/system/status` verified; foreign CORS origins rejected; stuck job marked failed on restart; starting from the broken `backend/venv` now boots and reports `missing_packages: [opencv, ultralytics]` instead of crashing. Found that `localhost` resolves to `::1` first while uvicorn binds IPv4 → frontend will target `127.0.0.1:8000` (M2).
 
 ### M2 — Frontend API config (P0)
 - `VITE_API_URL` in `frontend/.env` (+ `.env.example`); all fetches through `lib/api.ts`; WS URL derived from it.
@@ -147,10 +148,9 @@ frontend/src/
 | Before M8 | More clips (ideally ≥20 short instances per activity, several people) + `labels.csv` (I'll provide a template), or ~30 min to label with the tool. |
 | M7 | Allowing camera access in the browser when testing. |
 
-## 7. Open item — legacy data
+## 7. Legacy data — resolved
 
-The DB holds 9 fabricated events and failed/stuck duplicates; `uploads/` has 26 identical copies of the stick-figure clip.
-You chose not to delete them. Proposal (non-destructive): on first run of the new backend, **rename** `bas_ai.db` → `bas_ai.legacy.db` and start a clean DB, so no fabricated data reaches the dashboard, while the old file stays on disk. Needs your OK; otherwise the fake rows will appear in Dashboard/Analytics/Review.
+Approved 2026-09-29: `bas_ai.db` renamed to `bas_ai.legacy.db` (kept on disk, unused); the backend starts with a clean database. Duplicate uploads and `backend/venv` remain untouched.
 
 ## 8. Explicit non-goals / honesty rules
 

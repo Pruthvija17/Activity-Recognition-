@@ -1,14 +1,25 @@
-annotated-types==0.8.0
-anyio==4.15.0
-click==8.5.0
+# BAS AI backend — install into the project-root .venv:
+#   python -m venv .venv
+#   .venv\Scripts\python -m pip install -r backend\requirements.txt
+# Versions match the environment the project is developed and tested with.
+
+# Web API
 fastapi==0.141.1
-greenlet==3.5.5
-h11==0.16.0
-idna==3.19
-pydantic==2.13.5
-pydantic_core==2.46.5
-SQLAlchemy==2.0.52
-starlette==1.6.0
-typing_extensions==4.16.0
 uvicorn==0.52.4
+python-multipart==0.0.32
 websockets==17.1
+pydantic==2.13.5
+
+# Database
+SQLAlchemy==2.0.52
+
+# Computer vision / AI
+numpy==2.5.3
+opencv-python==5.0.0.93
+torch==2.14.0
+torchvision==0.29.0
+ultralytics==8.4.165
+lap==0.5.13  # required by ultralytics ByteTrack
+
+# Testing
+httpx==0.28.1
