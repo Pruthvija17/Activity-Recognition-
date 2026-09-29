@@ -96,7 +96,7 @@ frontend/src/
 - **Speed:** pose model now runs on every 3rd frame (~8 fps sampled): 496 inferences instead of 1,488 for the 62 s clip. Measured 118–137 s vs 309 s before, but the machine had a third-party service (`altisikservice`) using ~57 % CPU during all measurements; unloaded estimate ≈ 45 s. Re-measure on a quiet machine.
 - **Note for M4:** the rule classifier's motion thresholds were tuned per-sample at ~12 samples/s; now ~8/s. M4 replaces them with time-normalised features.
 
-### M4 — Activity engine v1: honest rules + temporal + unknown (P1)
+### M4 — Activity engine v1: honest rules + temporal + unknown (P1) — ✅ done (pending real-footage check)
 - Features per track per sample: normalised keypoints (hip-centred, torso-scaled), joint angles, wrist height/extension, centre velocity over a ~1 s window.
 - Rules produce a **score for every class** → softmax → real distribution. Confidence = max prob; entropy computed.
 - Unknown: `max_prob < threshold` OR `entropy > sensitivity_threshold` (Low 2.5 / Medium 1.75 / High 1.0 — matching the Settings copy, which becomes true). Also "unknown" when pose keypoints are too incomplete.
@@ -105,6 +105,9 @@ frontend/src/
 - Events store `start/end seconds`, frame numbers, confidence (mean prob of chosen class), `review_status`.
 - Unit tests on synthetic prediction streams for segmenter + unknown logic.
 - **Verify:** on the user's recorded clips, events have plausible labels, start/end within ~1 s of what a human marks, unknown gestures land in Review Queue.
+- **Result:** `services/activity/` = `features.py` (torso-normalised, per-second motion, jitter-smoothed hand activity), `rules.py` (per-class scores → softmax; atypical motion / horizontal torso suppress all classes → Unknown), `unknown.py` (entropy in bits by sensitivity Low 2.5 / Medium 1.75 / High 1.0, probability floor 0.40, invisible pose), `segmenter.py` (smoothing, hysteresis, min duration, gap split, pick-vs-place from carrying posture before/after a low reach, reduced confidence without context). `pipeline.py` rewritten as orchestrator; parameters in `weights/model_config.json` (rewritten: it previously described models that were never trained). Unconfirmed ByteTrack detections are skipped instead of given index IDs; tracks < 1 s dropped; people numbered by appearance. Settings sensitivity now changes the classifier (verified via API). 21 unit tests on synthetic skeletons + label streams (34 total).
+- **Real-image check** (videos built from ultralytics' `bus.jpg` / `zidane.jpg`): 4 and 2 people detected and tracked with stable IDs; visible people → Standing 0.87–0.99; people cut off by the frame edge → Unknown (pose not visible) → Review. Found and fixed: keypoint jitter was being counted as hand activity (panning video → false "Handling").
+- **Still open:** accuracy on real BAS-style footage (sitting, reaching, pick/place, handling) is unverified until the user's clips arrive; thresholds will be tuned on them.
 
 ### M5 — Data model, review, dashboard, analytics (P1/P2)
 - Migrations: experiments get `source` (upload|camera), `progress`, `error_message`, `processed_at`, `duration_seconds`, `fps`, `people_count`, `engine`; events get `review_status` (pending|confirmed|rejected|reclassified|auto), `original_activity`, `reviewed_at`.
@@ -117,6 +120,7 @@ frontend/src/
 ### M6 — Experiments list/detail, workflow, reports (P2)
 - Experiments page: list of all experiments (status, source, duration, people, events) + upload panel; "New Experiment" button becomes the upload flow (dead button removed).
 - `/experiments/:id` detail: video player, per-person timeline with a real time axis scaled to video duration, event table (click → seek), workflow panel.
+- Browser-playable previews: probe the codec on upload; if not H.264/VP9/AV1, transcode a preview with ffmpeg (found on this machine's PATH; optional) so HEVC `.mov` from phones can be reviewed. Until then the player explains codec failures instead of claiming the file is missing (done in M4).
 - Workflow: fix sequence validator (currently orders by HH:MM:SS *string* and mixes people) → order by `start_seconds`, per-person or combined toggle, ignore rejected; expected sequence editable in the detail page; wording "Observed sequence deviates from expected workflow — operator review required."
 - Reports: `GET /api/reports/{id}` JSON (experiment info, video, date, people, activity summary, durations, confidence, unknowns, person stats, workflow result, review status), `.csv` (real `text/csv` download), `.pdf` (reportlab). Reports list only for completed experiments.
 - **Verify:** download all three formats for a processed clip; numbers match Analytics for that experiment.

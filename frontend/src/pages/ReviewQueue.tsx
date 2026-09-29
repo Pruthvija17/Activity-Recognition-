@@ -5,6 +5,7 @@ import { confidencePct } from '../lib/format';
 import { useApiData } from '../hooks/useApiData';
 import { DataState } from '../components/StatusNotice';
 import type { ActivityEvent } from '../types/api';
+import { diagnoseVideoError } from '../lib/video';
 
 const ACTIVITIES = [
   'Standing',
@@ -58,7 +59,7 @@ export default function ReviewQueue() {
     };
     const onError = () => {
       setVideoLoading(false);
-      setVideoError('Video file is not available. The source file may have been moved or deleted.');
+      diagnoseVideoError(video.src).then(setVideoError);
     };
 
     video.addEventListener('loadedmetadata', onLoaded);
@@ -236,10 +237,6 @@ export default function ReviewQueue() {
                     className="w-full h-full object-contain"
                     controls
                     preload="metadata"
-                    onError={() => {
-                      setVideoLoading(false);
-                      setVideoError('Video file is not available. The source file may have been moved or deleted.');
-                    }}
                   />
                 )}
 

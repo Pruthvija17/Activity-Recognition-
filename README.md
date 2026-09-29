@@ -47,6 +47,10 @@ cd backend; ..\.venv\Scripts\python -m pytest tests -q
 
 Tests use a temporary database and uploads folder, never the real ones.
 
+## Recording test footage
+
+Fixed camera, whole body in view, good light. Hold each activity for 5–10 s. Record as **H.264 MP4** where possible: iPhones default to HEVC, which Chrome on Windows usually cannot play back in the Review Queue (analysis still works). On iPhone: Settings → Camera → Formats → *Most Compatible*.
+
 ## Processing videos
 
 Experiments → drop or select a video → **Upload & Process**. Upload progress, queue position and processing progress are shown live; jobs run one at a time in the background and survive page reloads. A backend restart marks unfinished jobs as failed (use **Retry**).

@@ -1,42 +1,34 @@
 {
   "project": "SIH26174 - BAS Activity Intelligence",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "detector": {
-    "model_name": "YOLOv8-Person",
-    "primary_weights": "yolov8n.pt",
-    "fallback_weights": "person_detector.onnx",
-    "confidence_threshold": 0.45,
-    "iou_threshold": 0.50
+    "weights": "yolo11n-pose.pt",
+    "confidence_threshold": 0.25,
+    "keypoint_visibility": 0.5,
+    "tracker": "bytetrack.yaml"
   },
-  "tracker": {
-    "algorithm": "ByteTrack-IoU",
-    "max_lost_frames": 30,
-    "min_track_length": 5
+  "sampling": {
+    "sample_fps": 8.0
   },
-  "temporal_classifier": {
-    "model_name": "Temporal-Activity-CNN",
-    "primary_weights": "activity_cnn.pt",
-    "fallback_weights": "activity_classifier.onnx",
-    "window_size_frames": 32,
-    "stride_frames": 8,
-    "activities": [
-      "Standing",
-      "Sitting",
-      "Walking",
-      "Reaching",
-      "Picking up an object",
-      "Placing an object",
-      "Handling experimental equipment"
-    ]
+  "tracking": {
+    "min_track_seconds": 1.0
   },
-  "open_set_detection": {
-    "unknown_activity_label": "Unknown",
-    "min_confidence_cutoff": 0.60,
-    "entropy_threshold": 1.75
+  "activity_engine": {
+    "type": "rule-based",
+    "feature_window_seconds": 1.0,
+    "softmax_temperature": 6.0,
+    "unknown_min_probability": 0.40,
+    "entropy_threshold_bits": {
+      "Low": 2.5,
+      "Medium": 1.75,
+      "High": 1.0
+    }
   },
   "event_segmentation": {
+    "smoothing_window_seconds": 0.6,
+    "hysteresis_seconds": 0.4,
     "min_event_duration_seconds": 1.0,
-    "debounce_frames": 12,
-    "smoothing_window": 5
+    "max_gap_seconds": 1.0,
+    "pick_place_context_seconds": 2.0
   }
 }
