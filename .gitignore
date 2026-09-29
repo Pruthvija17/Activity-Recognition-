@@ -1,0 +1,25 @@
+# Python
+.venv/
+backend/venv/
+__pycache__/
+*.pyc
+
+# Runtime data (kept on disk, not in git)
+backend/uploads/
+backend/*.db
+backend/outputs/
+
+# Model weights (large binaries)
+*.pt
+*.pth
+*.onnx
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Env / OS
+.env
+*.local
+.DS_Store
+Thumbs.db

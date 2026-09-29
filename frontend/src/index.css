@@ -1,0 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --color-sky-blue: #38BDF8;
+  --color-deep-blue: #0F4C81;
+  --color-ice-blue: #EFF9FF;
+  --color-soft-blue: #E0F2FE;
+  --color-brand-success: #16A34A;
+  --color-brand-warning: #F59E0B;
+  --color-brand-alert: #EF4444;
+  --color-brand-primary: #0F172A;
+  --color-brand-secondary: #475569;
+  --color-brand-muted: #64748B;
+
+  --font-sans: 'Inter', 'Manrope', sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-ice-blue);
+    color: var(--color-brand-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}

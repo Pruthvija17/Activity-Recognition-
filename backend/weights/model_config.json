@@ -1,0 +1,42 @@
+{
+  "project": "SIH26174 - BAS Activity Intelligence",
+  "version": "1.0.0",
+  "detector": {
+    "model_name": "YOLOv8-Person",
+    "primary_weights": "yolov8n.pt",
+    "fallback_weights": "person_detector.onnx",
+    "confidence_threshold": 0.45,
+    "iou_threshold": 0.50
+  },
+  "tracker": {
+    "algorithm": "ByteTrack-IoU",
+    "max_lost_frames": 30,
+    "min_track_length": 5
+  },
+  "temporal_classifier": {
+    "model_name": "Temporal-Activity-CNN",
+    "primary_weights": "activity_cnn.pt",
+    "fallback_weights": "activity_classifier.onnx",
+    "window_size_frames": 32,
+    "stride_frames": 8,
+    "activities": [
+      "Standing",
+      "Sitting",
+      "Walking",
+      "Reaching",
+      "Picking up an object",
+      "Placing an object",
+      "Handling experimental equipment"
+    ]
+  },
+  "open_set_detection": {
+    "unknown_activity_label": "Unknown",
+    "min_confidence_cutoff": 0.60,
+    "entropy_threshold": 1.75
+  },
+  "event_segmentation": {
+    "min_event_duration_seconds": 1.0,
+    "debounce_frames": 12,
+    "smoothing_window": 5
+  }
+}
