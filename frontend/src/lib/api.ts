@@ -6,12 +6,11 @@ import type {
   CsvReport,
   Experiment,
   HardwareStatus,
-  ProcessResponse,
   ReportItem,
   SystemSettings,
   SystemSettingsUpdate,
   SystemStatus,
-  UploadResponse,
+  VideoInfo,
 } from '../types/api';
 
 /** `offline`: the backend could not be reached at all. `http`: it answered with an error. */
@@ -50,6 +49,52 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+function errorFromResponse(status: number, bodyText: string): ApiError {
+  let detail = `Request failed (HTTP ${status}).`;
+  try {
+    const body = JSON.parse(bodyText);
+    if (body && typeof body.detail === 'string') detail = body.detail;
+  } catch {
+    /* non-JSON error body */
+  }
+  return new ApiError('http', detail, status);
+}
+
+/**
+ * Upload with progress reporting (fetch cannot report upload progress, XHR can).
+ * Rejects with an AbortError-named ApiError when `signal` aborts.
+ */
+function uploadWithProgress(file: File, onProgress?: (pct: number) => void, signal?: AbortSignal) {
+  return new Promise<VideoInfo>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_URL}/api/videos/upload`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as VideoInfo);
+        } catch {
+          reject(new ApiError('http', 'Unexpected response from the server.', xhr.status));
+        }
+      } else {
+        reject(errorFromResponse(xhr.status, xhr.responseText));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError('offline', MESSAGES.backendOffline));
+    xhr.onabort = () => {
+      const err = new ApiError('http', 'Upload cancelled.');
+      err.name = 'AbortError';
+      reject(err);
+    };
+    signal?.addEventListener('abort', () => xhr.abort());
+    const form = new FormData();
+    form.append('file', file);
+    xhr.send(form);
+  });
+}
+
 const json = (method: string, body: unknown): RequestInit => ({
   method,
   headers: { 'Content-Type': 'application/json' },
@@ -66,13 +111,12 @@ export const api = {
   updateSettings: (body: SystemSettingsUpdate) => request<SystemSettings>('/api/settings', json('PUT', body)),
 
   // Videos
-  uploadVideo: (file: File) => {
-    const form = new FormData();
-    form.append('file', file);
-    return request<UploadResponse>('/api/videos/upload', { method: 'POST', body: form });
-  },
+  uploadVideo: uploadWithProgress,
   processVideo: (videoId: string) =>
-    request<ProcessResponse>(`/api/videos/process/${encodeURIComponent(videoId)}`, { method: 'POST' }),
+    request<VideoInfo>(`/api/videos/${encodeURIComponent(videoId)}/process`, { method: 'POST' }),
+  getVideoStatus: (videoId: string) =>
+    request<VideoInfo>(`/api/videos/${encodeURIComponent(videoId)}/status`),
+  listVideos: () => request<VideoInfo[]>('/api/videos'),
   videoUrl: (videoId: string) => `${API_URL}/api/videos/${encodeURIComponent(videoId)}`,
 
   // Experiments & events

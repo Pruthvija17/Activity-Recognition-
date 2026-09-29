@@ -71,6 +71,16 @@ class Experiment(ExperimentBase):
     start_time: datetime.datetime
     video_filename: Optional[str] = None
     video_path: Optional[str] = None
+    source: Optional[str] = None
+    file_size: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    fps: Optional[float] = None
+    frame_count: Optional[int] = None
+    progress: Optional[float] = None
+    message: Optional[str] = None
+    engine: Optional[str] = None
+    processed_at: Optional[datetime.datetime] = None
+    processing_seconds: Optional[float] = None
     participants: List[Participant] = []
     events: List[ActivityEvent] = []
 

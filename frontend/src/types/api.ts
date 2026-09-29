@@ -42,31 +42,26 @@ export interface Experiment {
   video_path: string | null;
 }
 
-export interface UploadResponse {
+export type VideoStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
+
+/** Upload + processing state of one experiment video (GET /api/videos/{id}/status). */
+export interface VideoInfo {
   video_id: string;
   filename: string;
-  file_size: number;
-  status: string;
-}
-
-export interface ProcessedEvent {
-  person_id: string;
-  activity: string;
-  confidence: number;
-  start: string;
-  end: string;
-  duration: number;
-  status: string;
-}
-
-export interface ProcessResponse {
-  video_id: string;
-  status: string;
-  model_ready: boolean;
-  events_count: number;
-  results: ProcessedEvent[];
-  metadata: Record<string, unknown>;
-  message: string;
+  status: VideoStatus;
+  progress: number;
+  message: string | null;
+  source: string;
+  file_size: number | null;
+  duration_seconds: number | null;
+  fps: number | null;
+  frame_count: number | null;
+  engine: string | null;
+  created_at: string | null;
+  processed_at: string | null;
+  processing_seconds: number | null;
+  events_count: number | null;
+  file_exists: boolean;
 }
 
 export interface ActivityCount {

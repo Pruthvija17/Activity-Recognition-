@@ -9,10 +9,21 @@ class Experiment(Base):
 
     id = Column(String, primary_key=True, index=True)
     name = Column(String)
-    status = Column(String, default="active")
-    start_time = Column(DateTime, default=datetime.datetime.utcnow)
+    # Lifecycle: uploaded -> queued -> processing -> completed | failed
+    status = Column(String, default="uploaded")
+    start_time = Column(DateTime, default=datetime.datetime.utcnow)  # created / uploaded at
     video_filename = Column(String, nullable=True)  # Original filename of the uploaded video
     video_path = Column(String, nullable=True)       # Absolute path to the uploaded file
+    source = Column(String, default="upload")        # upload | camera
+    file_size = Column(Integer, nullable=True)       # bytes
+    duration_seconds = Column(Float, nullable=True)
+    fps = Column(Float, nullable=True)
+    frame_count = Column(Integer, nullable=True)
+    progress = Column(Float, default=0.0)            # 0-100 while processing
+    message = Column(Text, nullable=True)            # result summary or failure reason
+    engine = Column(String, nullable=True)           # activity engine that produced the events
+    processed_at = Column(DateTime, nullable=True)
+    processing_seconds = Column(Float, nullable=True)
 
     events = relationship("ActivityEvent", back_populates="experiment")
     participants = relationship("Participant", back_populates="experiment")

@@ -4,7 +4,7 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEIGHTS_DIR = os.path.join(BASE_DIR, "weights")
-UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
+UPLOADS_DIR = os.environ.get("BAS_UPLOADS_DIR", os.path.join(BASE_DIR, "uploads"))
 OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs")
 DB_PATH = os.environ.get("BAS_DB_PATH", os.path.join(BASE_DIR, "bas_ai.db"))
 MODEL_CONFIG_PATH = os.path.join(WEIGHTS_DIR, "model_config.json")

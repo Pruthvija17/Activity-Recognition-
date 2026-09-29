@@ -34,6 +34,23 @@ def migrate_db():
             cursor.execute("ALTER TABLE experiments ADD COLUMN video_filename VARCHAR")
         if "video_path" not in exp_cols:
             cursor.execute("ALTER TABLE experiments ADD COLUMN video_path VARCHAR")
+        for col, sql_type in [
+            ("source", "VARCHAR DEFAULT 'upload'"),
+            ("file_size", "INTEGER"),
+            ("duration_seconds", "FLOAT"),
+            ("fps", "FLOAT"),
+            ("frame_count", "INTEGER"),
+            ("progress", "FLOAT DEFAULT 0"),
+            ("message", "TEXT"),
+            ("engine", "VARCHAR"),
+            ("processed_at", "DATETIME"),
+            ("processing_seconds", "FLOAT"),
+        ]:
+            if col not in exp_cols:
+                cursor.execute(f"ALTER TABLE experiments ADD COLUMN {col} {sql_type}")
+        # Old status names -> current lifecycle names
+        cursor.execute("UPDATE experiments SET status = 'completed' WHERE status = 'processed'")
+        cursor.execute("UPDATE experiments SET status = 'uploaded' WHERE status = 'active'")
 
     if "activity_events" in tables:
         cursor.execute("PRAGMA table_info(activity_events)")

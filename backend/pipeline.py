@@ -6,7 +6,7 @@ main.py. It is a baseline, not a trained SIH26174 seven-class model.
 """
 import os, math, json, logging, shutil
 from collections import defaultdict, deque
-from typing import Any, Dict, List
+from typing import Dict
 
 from config import WEIGHTS_DIR, MODEL_CONFIG_PATH, POSE_WEIGHTS_NAME, POSE_WEIGHTS_PATH
 
@@ -27,6 +27,10 @@ except Exception as e:  # pragma: no cover - depends on environment
     IMPORT_ERRORS["ultralytics"] = str(e)
 
 ENGINE_NAME = "Rule-based pose baseline"
+
+# Frames per second actually run through the pose model. Video is decoded at full rate
+# but only every Nth frame is inferred (vid_stride), which dominates processing time on CPU.
+SAMPLE_FPS = 8.0
 ACTIVITIES = ["Standing", "Sitting", "Walking", "Reaching",
               "Picking up an object", "Placing an object",
               "Handling experimental equipment"]
@@ -106,6 +110,11 @@ class AIVideoPipeline:
             self.load_error=f"Pose model failed to load: {e}"
             log.error(self.load_error)
 
+    @property
+    def confidence_threshold(self) -> float:
+        """Events below this confidence (0-1) are sent to the Review Queue."""
+        return self._confidence_threshold
+
     def update_thresholds(self, confidence_threshold:int, unknown_sensitivity:str):
         self._confidence_threshold=max(.5,min(.95,float(confidence_threshold)/100))
         self._unknown_sensitivity=unknown_sensitivity or "Medium"
@@ -166,18 +175,25 @@ class AIVideoPipeline:
         if bh/bw>1.10 or abs(hip[1]-sh[1])/bh>.18: return "Standing",.72
         return "Unknown",.45
 
-    def process_video(self,path):
+    def process_video(self,path,progress_cb=None):
+        """Run detection + tracking + activity classification over a video file.
+
+        progress_cb(fraction) is called with 0..1 as frames are processed.
+        """
         if not os.path.exists(path):
             return {"model_ready":False,"events":[],"metadata":{},"message":"Video file not found."}
         if not self.model_ready:
             return {"model_ready":False,"events":[],"metadata":{},"message":self.load_error or "Pose model is not loaded."}
-        meta=self.get_video_metadata(path); fps=meta["fps"] or 30; every=max(1,round(fps/10))
-        hist=defaultdict(lambda:deque(maxlen=15)); preds=defaultdict(list); frame=0; detections=0
+        meta=self.get_video_metadata(path); fps=meta["fps"] or 30; every=max(1,round(fps/SAMPLE_FPS))
+        total=max(1,meta["frame_count"])
+        hist=defaultdict(lambda:deque(maxlen=15)); preds=defaultdict(list); detections=0; sampled=0
         try:
-            stream=self.model.track(source=path,stream=True,persist=False,classes=[0],conf=.25,verbose=False,tracker="bytetrack.yaml")
-            for r in stream:
-                if frame%every: frame+=1; continue
-                if r.boxes is None or r.keypoints is None: frame+=1; continue
+            stream=self.model.track(source=path,stream=True,persist=False,classes=[0],conf=.25,verbose=False,
+                                    tracker="bytetrack.yaml",vid_stride=every)
+            for idx,r in enumerate(stream):
+                frame=idx*every; sampled+=1
+                if progress_cb and idx%5==0: progress_cb(min(1.0,frame/total))
+                if r.boxes is None or r.keypoints is None: continue
                 xy=r.boxes.xyxy.cpu().numpy(); kp=r.keypoints.xy.cpu().numpy()
                 ids=r.boxes.id.cpu().numpy().astype(int).tolist() if r.boxes.id is not None else list(range(len(xy)))
                 for i,b in enumerate(xy):
@@ -189,10 +205,9 @@ class AIVideoPipeline:
                     hist[tid].append({"center":((box[0]+box[2])/2,(box[1]+box[3])/2),"wrists":wrists,"low":any(w[1]>(box[1]+box[3])/2 for w in wrists)})
                     preds[tid].append({"frame":frame,"time":t,"activity":activity,"confidence":conf})
                     detections+=1
-                frame+=1
         except Exception as e:
             log.exception("Video processing failed for %s", path)
-            return {"model_ready":True,"events":[],"metadata":meta,"message":f"Video processing failed: {e}"}
+            return {"model_ready":True,"failed":True,"events":[],"metadata":meta,"message":f"Video processing failed: {e}"}
 
         events=[]
         for tid,ps in preds.items():
@@ -215,6 +230,9 @@ class AIVideoPipeline:
             flush()
         events.sort(key=lambda e:(e["start_seconds"],e["person_id"]))
         return {"model_ready":True,"events":events,
-                "metadata":{**meta,"sample_every_frames":every,"detections":detections,
+                "metadata":{**meta,"sample_every_frames":every,"sampled_frames":sampled,"detections":detections,
+                             "people":len(preds),
                              "activity_engine":ENGINE_NAME},
-                "message":f"Processing complete. Generated {len(events)} activity events using the pose-based baseline."}
+                "message":(f"Processing complete: {len(preds)} people tracked, {len(events)} activity events ({ENGINE_NAME})."
+                           if detections else
+                           "Processing complete, but no people were detected in the video, so no activity events were produced.")}

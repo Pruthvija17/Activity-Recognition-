@@ -3,14 +3,12 @@ BAS Activity Intelligence – FastAPI Backend
 Port: 8000
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Body, Request
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
-import shutil
-import os
 import uuid
 import time
 import asyncio
@@ -24,15 +22,14 @@ log = logging.getLogger("bas.api")
 import models
 import schemas
 from database import engine, get_db, SessionLocal, check_db
-import pipeline
+from runtime import ai_pipeline, jobs
+from api import videos as videos_api
 
 API_VERSION = "2.1.0"
 
 # ── DB Init ───────────────────────────────────────────────────────────────────
 models.Base.metadata.create_all(bind=engine)
 
-# ── Pipeline (models are loaded once, here) ───────────────────────────────────
-ai_pipeline = pipeline.AIVideoPipeline()
 
 # ── Startup: apply saved settings to pipeline ─────────────────────────────────
 def _apply_saved_settings():
@@ -62,6 +59,7 @@ def _recover_interrupted_jobs():
         ).all()
         for exp in stuck:
             exp.status = "failed"
+            exp.message = "Processing was interrupted by a backend restart. Process the video again."
             log.warning("Experiment %s was interrupted by a restart; marked failed.", exp.id)
         db.commit()
     except Exception as e:
@@ -82,7 +80,9 @@ async def lifespan(_app: FastAPI):
     )
     if ai_pipeline.load_error:
         log.error("AI pipeline not ready: %s", ai_pipeline.load_error)
+    jobs.start()
     yield
+    jobs.stop()
 
 
 app = FastAPI(title="BAS Activity Intelligence API", version=API_VERSION, lifespan=lifespan)
@@ -104,14 +104,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error. Check the backend logs for details."},
     )
-
-# In-memory index of uploaded videos for quick lookup within a session
-uploaded_videos: dict = {}
-
-ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov"}
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
-
-UPLOADS_DIR = config.UPLOADS_DIR
 
 # Activity colours for analytics charts
 ACTIVITY_COLORS = {
@@ -141,35 +133,6 @@ def _hms_to_seconds(hms: str) -> float:
         return float(parts[0])
     except Exception:
         return 0.0
-
-
-def _find_video_path(video_id: str) -> Optional[str]:
-    """Find the video file path by video_id prefix."""
-    if video_id in uploaded_videos:
-        return uploaded_videos[video_id].get("file_path")
-    if os.path.exists(UPLOADS_DIR):
-        for f in os.listdir(UPLOADS_DIR):
-            if f.startswith(video_id):
-                return os.path.join(UPLOADS_DIR, f)
-    return None
-
-
-def _ensure_participant(db: Session, experiment_id: str, person_id_label: str) -> models.Participant:
-    """Get or create a Participant record."""
-    participant_id = f"{experiment_id}_{person_id_label.replace(' ', '_')}"
-    participant = db.query(models.Participant).filter(
-        models.Participant.id == participant_id
-    ).first()
-    if not participant:
-        participant = models.Participant(
-            id=participant_id,
-            experiment_id=experiment_id,
-            tracked_id=person_id_label,
-        )
-        db.add(participant)
-        db.commit()
-        db.refresh(participant)
-    return participant
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -297,203 +260,10 @@ def update_settings(body: schemas.SystemSettingsUpdate, db: Session = Depends(ge
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Video Upload & Processing
+# Video Upload & Processing  (api/videos.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.post("/api/videos/upload")
-async def upload_video_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided or empty filename.")
-
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file format '{ext}'. Only MP4, AVI, and MOV files are allowed.",
-        )
-
-    video_id = f"VID_{uuid.uuid4().hex[:8]}"
-    save_filename = f"{video_id}_{file.filename}"
-    save_path = os.path.join(UPLOADS_DIR, save_filename)
-
-    file_size = 0
-    try:
-        with open(save_path, "wb") as buffer:
-            while chunk := await file.read(1024 * 1024):
-                file_size += len(chunk)
-                if file_size > MAX_FILE_SIZE:
-                    buffer.close()
-                    if os.path.exists(save_path):
-                        os.remove(save_path)
-                    raise HTTPException(status_code=400, detail="File size exceeds the 500 MB limit.")
-                buffer.write(chunk)
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("Upload failed for %s", file.filename)
-        if os.path.exists(save_path):
-            os.remove(save_path)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-    # Persist experiment record
-    db_experiment = models.Experiment(
-        id=video_id,
-        name=file.filename,
-        video_filename=file.filename,
-        video_path=save_path,
-    )
-    db.add(db_experiment)
-    db.commit()
-
-    log.info("Uploaded %s as %s (%.1f MB)", file.filename, video_id, file_size / 1e6)
-    uploaded_videos[video_id] = {
-        "video_id": video_id,
-        "filename": file.filename,
-        "file_size": file_size,
-        "file_path": save_path,
-        "status": "uploaded",
-    }
-
-    return {
-        "video_id": video_id,
-        "filename": file.filename,
-        "file_size": file_size,
-        "status": "uploaded",
-    }
-
-
-@app.post("/api/videos/process/{video_id}")
-async def process_video_by_id(video_id: str, db: Session = Depends(get_db)):
-    file_path = _find_video_path(video_id)
-    if not file_path or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"Video ID '{video_id}' not found.")
-
-    # Update experiment status
-    db_experiment = db.query(models.Experiment).filter(models.Experiment.id == video_id).first()
-    if not db_experiment:
-        raise HTTPException(status_code=404, detail="Experiment record not found.")
-    db_experiment.status = "processing"
-    db.commit()
-
-    # Run pipeline
-    log.info("Processing started: %s", video_id)
-    t0 = time.time()
-    result = ai_pipeline.process_video(file_path)
-    log.info("Processing finished: %s in %.1fs — %s", video_id, time.time() - t0, result.get("message", ""))
-    model_ready = result.get("model_ready", False)
-    message = result.get("message", "")
-
-    if not model_ready:
-        db_experiment.status = "failed"
-        db.commit()
-        raise HTTPException(
-            status_code=400,
-            detail=f"AI Model Weights Missing: {message}",
-        )
-
-    raw_events = result.get("events", [])
-    metadata = result.get("metadata", {})
-
-    saved_events = []
-    for evt in raw_events:
-        participant = _ensure_participant(db, video_id, evt.get("person_id", "Person 01"))
-        start_hms = evt.get("start", "00:00:00")
-        end_hms = evt.get("end", "00:00:05")
-        start_sec = evt.get("start_seconds", _hms_to_seconds(start_hms))
-        end_sec = evt.get("end_seconds", _hms_to_seconds(end_hms))
-        duration = round(end_sec - start_sec, 2)
-        confidence = float(evt.get("confidence", 0.0))
-        activity = evt.get("activity", "Unknown")
-        status = "Review" if activity.lower() in ("unknown", "unexpected") or confidence < 0.6 else "Confirmed"
-
-        event_id = str(uuid.uuid4())
-        db_event = models.ActivityEvent(
-            id=event_id,
-            experiment_id=video_id,
-            person_id=participant.id,
-            video_id=video_id,
-            activity_type=activity,
-            start_time=start_hms,
-            end_time=end_hms,
-            start_seconds=start_sec,
-            end_seconds=end_sec,
-            duration=duration,
-            confidence=confidence,
-            status=status,
-            frame_number=evt.get("frame_start"),
-        )
-        db.add(db_event)
-        saved_events.append({
-            "person_id": evt.get("person_id"),
-            "activity": activity,
-            "confidence": confidence,
-            "start": start_hms,
-            "end": end_hms,
-            "duration": duration,
-            "status": status,
-        })
-
-    db_experiment.status = "processed"
-    db.commit()
-
-    return {
-        "video_id": video_id,
-        "status": "processed",
-        "model_ready": True,
-        "events_count": len(saved_events),
-        "results": saved_events,
-        "metadata": metadata,
-        "message": message,
-    }
-
-
-@app.get("/api/videos/")
-def list_videos(db: Session = Depends(get_db)):
-    """List all uploaded videos / experiments."""
-    experiments = db.query(models.Experiment).all()
-    result = []
-    for exp in experiments:
-        file_path = exp.video_path or _find_video_path(exp.id)
-        result.append({
-            "video_id": exp.id,
-            "filename": exp.video_filename or exp.name,
-            "status": exp.status,
-            "start_time": exp.start_time.isoformat() if exp.start_time else None,
-            "file_exists": os.path.exists(file_path) if file_path else False,
-        })
-    return result
-
-
-@app.get("/api/videos/{video_id}")
-def serve_video(video_id: str, db: Session = Depends(get_db)):
-    """Serve the actual uploaded video file for playback."""
-    file_path = _find_video_path(video_id)
-    if not file_path or not os.path.exists(file_path):
-        # Try looking up via DB
-        exp = db.query(models.Experiment).filter(models.Experiment.id == video_id).first()
-        if exp and exp.video_path and os.path.exists(exp.video_path):
-            file_path = exp.video_path
-        else:
-            raise HTTPException(status_code=404, detail=f"Video file for ID '{video_id}' not found.")
-
-    filename = os.path.basename(file_path)
-    ext = os.path.splitext(filename)[1].lower()
-    media_types = {".mp4": "video/mp4", ".avi": "video/x-msvideo", ".mov": "video/quicktime"}
-    media_type = media_types.get(ext, "video/mp4")
-
-    return FileResponse(
-        path=file_path,
-        media_type=media_type,
-        filename=filename,
-        headers={"Accept-Ranges": "bytes"},
-    )
-
-
-# Legacy upload endpoint (keeps backward compat)
-@app.post("/api/upload/")
-async def upload_video_legacy(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    res = await upload_video_file(file, db)
-    return {"experiment_id": res["video_id"], "message": "Video uploaded. Use /api/videos/process/{video_id} to process."}
+app.include_router(videos_api.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -21,5 +21,7 @@ torchvision==0.29.0
 ultralytics==8.4.165
 lap==0.5.13  # required by ultralytics ByteTrack
 
-# Testing
+# Testing / dev
 httpx==0.28.1
+pytest==8.4.2
+pyflakes==4.0.0

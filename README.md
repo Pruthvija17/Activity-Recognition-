@@ -39,12 +39,25 @@ If a component is not ready, `/api/system/status` says why (`model_error`, `miss
 
 > Use `127.0.0.1` rather than `localhost` for the backend: on this Windows setup `localhost` resolves to IPv6 `::1` first, while the backend listens on IPv4.
 
+## Tests
+
+```powershell
+cd backend; ..\.venv\Scripts\python -m pytest tests -q
+```
+
+Tests use a temporary database and uploads folder, never the real ones.
+
+## Processing videos
+
+Experiments → drop or select a video → **Upload & Process**. Upload progress, queue position and processing progress are shown live; jobs run one at a time in the background and survive page reloads. A backend restart marks unfinished jobs as failed (use **Retry**).
+
 ## Backend configuration (environment variables)
 
 | Variable | Default |
 |---|---|
 | `BAS_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` |
 | `BAS_DB_PATH` | `backend/bas_ai.db` |
+| `BAS_UPLOADS_DIR` | `backend/uploads` |
 | `BAS_POSE_WEIGHTS` | `yolo11n-pose.pt` (in `backend/weights/`) |
 | `BAS_LOG_LEVEL` | `INFO` |
 
