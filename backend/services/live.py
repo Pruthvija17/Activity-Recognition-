@@ -23,7 +23,7 @@ import config
 import models
 from database import SessionLocal
 from pipeline import AIVideoPipeline, build_events
-from services.activity.features import TrackFeatures
+from services.activity.engine import TrackState
 from services.activity.rules import LOW_REACH, UNKNOWN
 from services.activity.segmenter import Sample
 from services.jobs import JobManager, save_events
@@ -51,7 +51,7 @@ class LiveSession:
         self.fps = fps
         self.record_path = record_path
         self.model = YOLO(config.POSE_WEIGHTS_PATH)  # fresh instance -> fresh tracker state
-        self.features: Dict[int, TrackFeatures] = {}
+        self.states: Dict[int, TrackState] = {}
         self.tracks: Dict[int, List[Sample]] = {}
         self.labels: Dict[int, str] = {}
         self.frame_index = 0          # frames received and analysed
@@ -128,12 +128,9 @@ class LiveSession:
                 kxy = r.keypoints.xy.cpu().numpy()
                 kconf = r.keypoints.conf.cpu().numpy() if r.keypoints.conf is not None else None
                 for i, tid in enumerate(ids):
-                    tf = self.features.setdefault(tid, TrackFeatures(
-                        window_seconds=self.cfg.feature_window_seconds,
-                        keypoint_visibility=self.cfg.keypoint_visibility,
-                    ))
-                    f = tf.update(t, kxy[i], kconf[i] if kconf is not None else None, xyxy[i])
-                    pred = self.pipeline.classifier.predict(f)
+                    state = self.states.setdefault(tid, self.pipeline.activity.new_track())
+                    f, pred, _ = self.pipeline.activity.observe(
+                        state, t, kxy[i], kconf[i] if kconf is not None else None, xyxy[i])
                     samples = self.tracks.setdefault(tid, [])
                     samples.append(Sample(t=t, frame=slot, label=pred.label,
                                           confidence=pred.confidence, probs=pred.probs, carry=f.carry))
@@ -167,7 +164,7 @@ class LiveSession:
             if self.writer is not None:
                 self.writer.release()
             interval = 1.0 / self.fps
-            events, people, dropped = build_events(self.tracks, self.cfg, interval, labels=self.labels)
+            events, people, dropped, _ = build_events(self.tracks, self.cfg, interval, labels=self.labels)
             return events, people, dropped
 
 

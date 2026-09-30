@@ -5,6 +5,7 @@ import { api, toApiError } from '../lib/api';
 import { API_URL } from '../lib/config';
 import { parseServerDate } from '../lib/format';
 import { cameraSupported } from '../hooks/useCamera';
+import TrainingPanel from '../components/TrainingPanel';
 import { useApiData } from '../hooks/useApiData';
 import { useSystemStatus } from '../hooks/useSystemStatus';
 import type { SystemSettings } from '../types/api';
@@ -341,6 +342,8 @@ export default function Settings() {
             )}
           </div>
         </div>
+
+        <TrainingPanel />
       </div>
     </div>
   );

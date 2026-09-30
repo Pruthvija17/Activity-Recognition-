@@ -41,13 +41,14 @@ class OpenSetClassifier:
     def entropy_threshold(self) -> float:
         return self.entropy_bits.get(self.sensitivity, self.entropy_bits["Medium"])
 
-    def predict(self, features: PoseFeatures) -> Prediction:
-        if not features.visible:
-            uniform = {c: 1.0 / len(INTERNAL_CLASSES) for c in INTERNAL_CLASSES}
-            return Prediction(UNKNOWN, 0.0, INTERNAL_CLASSES[0], entropy_bits(uniform), uniform,
-                              reason="pose not visible (shoulders/hips not detected)")
+    @staticmethod
+    def not_visible(classes=INTERNAL_CLASSES) -> Prediction:
+        uniform = {c: 1.0 / len(classes) for c in classes}
+        return Prediction(UNKNOWN, 0.0, classes[0], entropy_bits(uniform), uniform,
+                          reason="pose not visible (shoulders/hips not detected)")
 
-        probs = softmax(class_scores(features), self.temperature)
+    def decide(self, probs: Dict[str, float]) -> Prediction:
+        """Open-set decision on any class distribution (rule scores or a trained model)."""
         best = max(probs, key=probs.get)
         conf = probs[best]
         ent = entropy_bits(probs)
@@ -56,3 +57,9 @@ class OpenSetClassifier:
         if conf < self.min_probability:
             return Prediction(UNKNOWN, conf, best, ent, probs, reason=f"low probability ({conf:.2f})")
         return Prediction(best, conf, best, ent, probs)
+
+    def predict(self, features: PoseFeatures) -> Prediction:
+        """Rule-based prediction for one pose."""
+        if not features.visible:
+            return self.not_visible()
+        return self.decide(softmax(class_scores(features), self.temperature))

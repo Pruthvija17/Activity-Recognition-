@@ -71,6 +71,6 @@ Live Monitor â†’ **Start camera** (allow camera access when the browser asks) â†
 
 ## Honest status of the AI
 
-Activity labels currently come from a **rule-based baseline** on YOLO pose keypoints; no trained activity model exists yet (planned in milestone M8). The UI and API label results accordingly. Processing runs on CPU when no CUDA GPU is available.
+Activity labels come from a **rule-based baseline** on YOLO pose keypoints until you train a model on your own labelled footage ([`docs/TRAINING.md`](docs/TRAINING.md)); a trained model in `backend/weights/activity_gru.pt` is picked up automatically on restart. The header, Dashboard and Settings always show which engine produced the results, and Settings shows how much reviewed training data exists. Processing runs on CPU when no CUDA GPU is available.
 
 `backend/bas_ai.legacy.db` holds the previous database (which contained fabricated example events); it is kept for reference and not used.

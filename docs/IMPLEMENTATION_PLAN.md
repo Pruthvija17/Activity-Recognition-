@@ -139,13 +139,16 @@ frontend/src/
 - **Browser check** (stand-in camera stream of the bus clip): 2–4 people tracked and labelled live, session saved with 4 events and a playable recording. Measured server inference ≈ 240 ms / frame (≈ 3 fps possible on this CPU). The test window was hidden, where Chrome throttles JPEG encoding to ~1/s, so the in-browser rate there (0.7 fps) is not representative; to be confirmed with the user's webcam on a visible window.
 - **Fixed on the way:** session time was frames ÷ requested fps, which shrank all durations whenever fewer frames arrived (an 83 s session was saved as 11 s); frames are now stamped with real time and the recording padded to match.
 
-### M8 — Trainable temporal model (P1, needs labelled footage)
+### M8 — Trainable temporal model (P1, needs labelled footage) — ✅ tooling done; no model trained yet (no labelled footage)
 - `training/extract_pose.py`: runs the same detector/tracker, dumps per-track keypoint sequences.
 - Label format: `labels.csv` → `video, start_s, end_s, activity[, person]` (template + instructions provided).
 - `training/train_gru.py`: small GRU over 32-frame windows, **split by video/subject** (PRD §28, avoids leakage), class weights; saves `weights/activity_gru.pt` + `activity_gru.json` (classes, window, feature spec, metrics).
 - `training/evaluate.py`: accuracy, per-class P/R/F1, confusion matrix, unknown precision/recall with held-out "other" clips.
 - Pipeline picks GRU automatically when weights + matching spec exist; UI shows which engine produced each experiment.
 - **Verify:** evaluation report generated on held-out videos; results shown honestly even if accuracy is modest.
+- **Result:** `services/activity/sequence.py` (versioned 78-value feature vector: normalised keypoints + pose features + presence flags), `temporal.py` (GRU, spec-checked loading), `engine.py` (one engine for uploads and live: trained model when valid, rules otherwise, rules during the first ~1 s of a track). `training/`: `labels` (CSV + export of operator-reviewed events), `extract` (same detector/tracker/features as the app, cached), `dataset` (windows, person matching, gaps), `train` (split by video, refuses < 3 videos, class weights, early stopping, open-set calibration), `evaluate` (accuracy, per-class P/R/F1, confusion matrix, Unknown precision/recall, markdown report). `GET /api/training/summary`, `/api/training/labels.csv`; Settings panel; Dashboard shows model test accuracy when loaded. `docs/TRAINING.md`. 11 tests incl. end-to-end training on synthetic pose sequences (79 total).
+- **Found and fixed:** a closed-set trained model forced an unseen (fall-like) pose into a known class (Unknown recall 0 %). Added prototype-distance novelty detection calibrated at training time → Unknown recall 100 % on the synthetic test, false-Unknown ≤ 20 %.
+- **Real-data run:** exporting the one reviewed label from the live DB and training correctly refuses ("only 1 labelled video; at least 3 needed"). Synthetic accuracy (100 % on 12 windows) proves the machinery, not real-world performance.
 
 ### M9 — End-to-end tests, polish, demo
 - `pytest` API tests (TestClient, temp DB, tiny generated video) covering health, status, upload validation, job lifecycle, review actions, analytics, reports.

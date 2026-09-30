@@ -129,7 +129,15 @@ export default function Dashboard() {
             <StatusRow
               label="Trained activity model"
               ok={status.trained_activity_model}
-              value={status.trained_activity_model ? 'Loaded' : 'Not trained yet (using rule-based baseline)'}
+              value={
+                status.trained_activity_model && status.activity_model_info
+                  ? `Loaded (test accuracy ${
+                      status.activity_model_info.metrics.test_accuracy == null
+                        ? 'n/a'
+                        : `${Math.round(status.activity_model_info.metrics.test_accuracy * 100)}%`
+                    })`
+                  : status.activity_model_error ?? 'Not trained yet (using rule-based baseline)'
+              }
             />
             <StatusRow label="Compute" ok value={status.cuda ? `GPU — ${status.device}` : 'CPU (no CUDA GPU)'} />
           </div>

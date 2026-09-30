@@ -8,12 +8,36 @@ export interface SystemStatus {
   activity_model: boolean;
   trained_activity_model: boolean;
   activity_engine: string;
+  activity_model_error: string | null;
+  activity_model_info: ActivityModelInfo | null;
   model_ready: boolean;
   model_error: string | null;
   missing_packages: string[];
   cuda: boolean;
   device: string;
   timestamp: string;
+}
+
+export interface ActivityModelInfo {
+  trained_at: string;
+  classes: string[];
+  window: number;
+  sample_fps: number;
+  metrics: { val_macro_f1: number; test_accuracy: number | null; test_macro_f1: number | null; test_windows: number };
+  data: { split: string; train_videos: string[]; val_videos: string[]; test_videos: string[] };
+}
+
+export interface TrainingSummary {
+  labelled_segments: number;
+  videos: number;
+  per_activity: { activity: string; segments: number }[];
+  recommended_segments_per_activity: number;
+  min_videos: number;
+  ready: boolean;
+  needs_more: string[];
+  engine: string;
+  trained_model: ActivityModelInfo | null;
+  model_error: string | null;
 }
 
 export interface ActivityEvent {

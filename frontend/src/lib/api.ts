@@ -14,6 +14,7 @@ import type {
   SystemSettings,
   SystemSettingsUpdate,
   SystemStatus,
+  TrainingSummary,
   VideoInfo,
   WorkflowResult,
 } from '../types/api';
@@ -166,6 +167,10 @@ export const api = {
     ),
   resetWorkflow: (experimentId: string) =>
     request<WorkflowResult>(`/api/experiments/${encodeURIComponent(experimentId)}/workflow`, { method: 'DELETE' }),
+
+  // Training data
+  getTrainingSummary: () => request<TrainingSummary>('/api/training/summary'),
+  trainingLabelsUrl: () => `${API_URL}/api/training/labels.csv`,
 
   // Live camera monitoring
   startLive: (fps: number, name?: string) =>

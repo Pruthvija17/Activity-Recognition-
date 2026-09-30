@@ -66,6 +66,8 @@ class PoseFeatures:
     speed: Optional[float] = None          # body (hip-mid) speed in L per second
     hand_activity: Optional[float] = None  # wrist motion relative to the body, L per second
     torso_px: float = 0.0
+    # 17 x (x, y, visible): keypoints relative to the hip centre in torso lengths (zeros if hidden)
+    keypoints: Optional[List[float]] = None
 
     @property
     def carry(self) -> float:
@@ -111,6 +113,11 @@ class TrackFeatures:
 
         L = _dist(sh, hip)
         f = PoseFeatures(visible=True, aspect=aspect, torso_px=L)
+        kps: List[float] = []
+        for i in range(17):
+            q = p(i)
+            kps += [(q[0] - hip[0]) / L, (q[1] - hip[1]) / L, 1.0] if q else [0.0, 0.0, 0.0]
+        f.keypoints = kps
 
         # Torso orientation: angle between hip->shoulder and straight up.
         cos_up = -(sh[1] - hip[1]) / L

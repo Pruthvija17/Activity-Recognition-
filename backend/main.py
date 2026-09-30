@@ -25,6 +25,7 @@ from api import review as review_api
 from api import experiments as experiments_api
 from api import reports as reports_api
 from api import live as live_api
+from api import training as training_api
 
 API_VERSION = "2.1.0"
 
@@ -140,7 +141,9 @@ def system_status():
         "database": check_db(),
         "yolo_model": model["detector_ready"],
         "activity_model": model["classifier_ready"],
-        "trained_activity_model": False,
+        "trained_activity_model": model["trained_model"],
+        "activity_model_error": model["activity_model_error"],
+        "activity_model_info": model["activity_model_info"],
         "activity_engine": model["engine"],
         "model_ready": model["model_ready"],
         "model_error": model["load_error"],
@@ -267,3 +270,4 @@ app.include_router(reports_api.router)
 # ─────────────────────────────────────────────────────────────────────────────
 
 app.include_router(live_api.router)
+app.include_router(training_api.router)

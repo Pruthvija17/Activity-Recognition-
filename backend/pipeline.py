@@ -6,8 +6,9 @@
       -> smoothing / hysteresis / min-duration / pick-vs-place (segmenter.py)
       -> activity events per person
 
-The activity classifier is a transparent rule-based baseline on pose keypoints; there is no
-trained activity model yet. Models are loaded once per process.
+Activity labels come from a trained temporal model (weights/activity_gru.pt) when one exists and
+matches the current feature layout, otherwise from a transparent rule-based baseline on pose
+keypoints. Models are loaded once per process.
 """
 import json
 import logging
@@ -16,8 +17,9 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from config import MODEL_CONFIG_PATH, POSE_WEIGHTS_NAME, POSE_WEIGHTS_PATH, WEIGHTS_DIR
-from services.activity.features import TrackFeatures
+from config import ACTIVITY_MODEL_PATH, MODEL_CONFIG_PATH, POSE_WEIGHTS_NAME, POSE_WEIGHTS_PATH, WEIGHTS_DIR
+from services.activity.engine import RULES_ENGINE, ActivityEngine, TrackState
+from services.activity.temporal import TemporalModel
 from services.activity.rules import ACTIVITIES, UNKNOWN
 from services.activity.segmenter import Sample, SegmentConfig, segment_track
 from services.activity.unknown import DEFAULT_ENTROPY_BITS, OpenSetClassifier
@@ -38,7 +40,7 @@ except Exception as e:  # pragma: no cover - depends on environment
     YOLO = None
     IMPORT_ERRORS["ultralytics"] = str(e)
 
-ENGINE_NAME = "Rule-based pose baseline"
+ENGINE_NAME = RULES_ENGINE  # name when no trained model is loaded
 
 
 def hms(seconds: float) -> str:
@@ -110,8 +112,10 @@ def build_events(tracks: Dict[int, List[Sample]], cfg: EngineConfig, sample_inte
     order = sorted(kept, key=lambda tid: kept[tid][0].t)
     seg_cfg = cfg.segment_config(sample_interval)
     events = []
+    names: Dict[int, str] = {}
     for number, tid in enumerate(order, start=1):
         person = (labels or {}).get(tid) or f"Person {number:02d}"
+        names[tid] = person
         for seg in segment_track(kept[tid], seg_cfg):
             events.append({
                 "person_id": person,
@@ -127,7 +131,7 @@ def build_events(tracks: Dict[int, List[Sample]], cfg: EngineConfig, sample_inte
                 "frame_end": seg.frame_end,
             })
     events.sort(key=lambda e: (e["start_seconds"], e["person_id"]))
-    return events, len(order), len(tracks) - len(kept)
+    return events, len(order), len(tracks) - len(kept), names
 
 
 class AIVideoPipeline:
@@ -146,7 +150,21 @@ class AIVideoPipeline:
             min_probability=self.engine.unknown_min_probability,
             entropy_bits=dict(self.engine.entropy_threshold_bits),
         )
+        self.activity_model_error: Optional[str] = None
+        self.reload_activity_model()
         self.load_models()
+
+    def reload_activity_model(self, path: str = ACTIVITY_MODEL_PATH) -> None:
+        """Use a trained temporal model if valid weights exist, else the rule baseline."""
+        temporal, error = TemporalModel.load(path)
+        self.activity_model_error = error
+        self.activity = ActivityEngine(self.classifier, temporal,
+                                       feature_window_seconds=self.engine.feature_window_seconds,
+                                       keypoint_visibility=self.engine.keypoint_visibility)
+        if temporal:
+            log.info("Activity engine: %s (%s)", self.activity.name, path)
+        elif error:
+            log.error("Trained activity model not used: %s", error)
 
     @staticmethod
     def _read_config() -> dict:
@@ -165,9 +183,13 @@ class AIVideoPipeline:
             "model_ready": self.model_ready,
             "detector_ready": self.detector_loaded,
             "classifier_ready": self.classifier_loaded,
-            "baseline_mode": True,
-            "engine": ENGINE_NAME,
-            "classifier_type": "YOLO pose keypoints + rule-based activity baseline (no trained activity model)",
+            "baseline_mode": not self.activity.trained,
+            "engine": self.activity.name,
+            "trained_model": self.activity.trained,
+            "activity_model_error": self.activity_model_error,
+            "activity_model_info": self._activity_model_info(),
+            "classifier_type": ("YOLO pose keypoints + trained temporal GRU" if self.activity.trained else
+                                "YOLO pose keypoints + rule-based activity baseline (no trained activity model)"),
             "weights_directory": WEIGHTS_DIR,
             "files": {"pose_model": {"path": POSE_WEIGHTS_PATH, "exists": os.path.exists(POSE_WEIGHTS_PATH)}},
             "import_errors": IMPORT_ERRORS,
@@ -178,6 +200,12 @@ class AIVideoPipeline:
             "instructions": ("Activity labels come from a rule-based baseline on pose keypoints. "
                              "A trained temporal model will be used automatically once its weights exist."),
         }
+
+    def _activity_model_info(self) -> Optional[dict]:
+        if not self.activity.trained:
+            return None
+        spec = self.activity.temporal.spec
+        return {k: spec.get(k) for k in ("trained_at", "classes", "window", "sample_fps", "metrics", "data")}
 
     @property
     def confidence_threshold(self) -> float:
@@ -211,7 +239,7 @@ class AIVideoPipeline:
             log.info("Loading pose model: %s", POSE_WEIGHTS_PATH)
             self.model = YOLO(POSE_WEIGHTS_PATH)
             self.model_loaded = self.detector_loaded = self.classifier_loaded = self.model_ready = True
-            log.info("Pose model loaded; %s ready.", ENGINE_NAME)
+            log.info("Pose model loaded; activity engine: %s.", self.activity.name)
         except Exception as e:
             self.load_error = f"Pose model failed to load: {e}"
             log.error(self.load_error)
@@ -231,10 +259,12 @@ class AIVideoPipeline:
                 "duration_seconds": round(duration, 3), "duration": hms(duration),
                 "filename": os.path.basename(path)}
 
-    def process_video(self, path: str, progress_cb: Optional[Callable[[float], None]] = None):
+    def process_video(self, path: str, progress_cb: Optional[Callable[[float], None]] = None,
+                      collect_features: bool = False):
         """Run detection + tracking + activity recognition over a video file.
 
         progress_cb(fraction) is called with 0..1 as frames are processed.
+        collect_features=True also returns per-person feature-vector sequences (for training).
         """
         if not os.path.exists(path):
             return {"model_ready": False, "events": [], "metadata": {}, "message": "Video file not found."}
@@ -248,8 +278,9 @@ class AIVideoPipeline:
         sample_interval = stride / fps
         total = max(1, meta["frame_count"])
 
-        features: Dict[int, TrackFeatures] = {}
+        states: Dict[int, TrackState] = {}
         tracks: Dict[int, List[Sample]] = {}
+        feature_tracks: Dict[int, dict] = {}
         detections = sampled = unknown_samples = 0
         try:
             stream = self.model.track(
@@ -272,12 +303,13 @@ class AIVideoPipeline:
                 kxy = r.keypoints.xy.cpu().numpy()
                 kconf = r.keypoints.conf.cpu().numpy() if r.keypoints.conf is not None else None
                 for i, tid in enumerate(ids):
-                    tf = features.setdefault(tid, TrackFeatures(
-                        window_seconds=self.engine.feature_window_seconds,
-                        keypoint_visibility=self.engine.keypoint_visibility,
-                    ))
-                    f = tf.update(t, kxy[i], kconf[i] if kconf is not None else None, xyxy[i])
-                    pred = self.classifier.predict(f)
+                    state = states.setdefault(tid, self.activity.new_track())
+                    f, pred, vec = self.activity.observe(state, t, kxy[i], kconf[i] if kconf is not None else None,
+                                                         xyxy[i])
+                    if collect_features:
+                        ft = feature_tracks.setdefault(tid, {"t": [], "vectors": []})
+                        ft["t"].append(round(t, 4))
+                        ft["vectors"].append(vec)
                     if pred.label == UNKNOWN:
                         unknown_samples += 1
                     tracks.setdefault(tid, []).append(Sample(
@@ -290,15 +322,16 @@ class AIVideoPipeline:
             return {"model_ready": True, "failed": True, "events": [], "metadata": meta,
                     "message": f"Video processing failed: {e}"}
 
-        events, people, dropped = build_events(tracks, self.engine, sample_interval)
+        events, people, dropped, names = build_events(tracks, self.engine, sample_interval)
+        engine_name = self.activity.name
         if progress_cb:
             progress_cb(1.0)
 
         if not detections:
             message = "Processing complete, but no people were detected in the video, so no activity events were produced."
         else:
-            message = f"Processing complete: {people} people tracked, {len(events)} activity events ({ENGINE_NAME})."
-        return {
+            message = f"Processing complete: {people} people tracked, {len(events)} activity events ({engine_name})."
+        result = {
             "model_ready": True,
             "events": events,
             "metadata": {
@@ -309,8 +342,13 @@ class AIVideoPipeline:
                 "unknown_samples": unknown_samples,
                 "people": people,
                 "dropped_short_tracks": dropped,
-                "activity_engine": ENGINE_NAME,
+                "activity_engine": engine_name,
                 "unknown_sensitivity": self.classifier.sensitivity,
             },
             "message": message,
         }
+        if collect_features:
+            # Keyed by the same person names as the events, so labels can refer to "Person 01".
+            result["feature_tracks"] = {names[tid]: ft for tid, ft in feature_tracks.items() if tid in names}
+            result["sample_interval"] = sample_interval
+        return result

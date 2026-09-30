@@ -26,3 +26,7 @@ Thumbs.db
 
 # Local tool config
 .claude/
+
+# Training data (feature caches, label files with local paths)
+backend/data/
+docs/MODEL_EVALUATION.md

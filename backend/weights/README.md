@@ -6,7 +6,7 @@ Model files are loaded once at backend startup from this directory. Weight files
 | :--- | :--- | :--- | :--- |
 | Person detector + pose + tracking | `yolo11n-pose.pt` | **In use** | Ultralytics YOLO11 pose: person boxes, 17 COCO keypoints; IDs via ByteTrack |
 | Activity classifier | — | **Rule-based baseline** | Activity labels are derived from pose keypoints by transparent rules (`pipeline.py`). No trained activity model exists yet. |
-| Trained temporal classifier | `activity_gru.pt` (planned, milestone M8) | Not trained | Will be picked up automatically once trained from labelled footage |
+| Trained temporal classifier | `activity_gru.pt` + `activity_gru.json` | Optional | GRU over ~2 s of pose features; created by `python -m training.train` (see docs/TRAINING.md) and used automatically when present and compatible |
 
 If `yolo11n-pose.pt` is missing, the backend attempts a one-time download of the official Ultralytics weights into this folder. If that fails (offline), `/api/system/status` reports `yolo_model: false` with the reason, and processing is refused instead of producing fabricated results.
 
@@ -22,4 +22,4 @@ If `yolo11n-pose.pt` is missing, the backend attempts a one-time download of the
 
 Plus `Unknown` for detections the engine cannot confidently assign; these go to the Review Queue.
 
-`model_config.json` holds thresholds and segmentation parameters; it will be wired into the activity engine in milestone M4.
+`model_config.json` holds the sampling, tracking, open-set and event-segmentation parameters used by the engine.

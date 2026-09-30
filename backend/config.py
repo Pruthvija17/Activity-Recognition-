@@ -11,6 +11,8 @@ MODEL_CONFIG_PATH = os.path.join(WEIGHTS_DIR, "model_config.json")
 
 POSE_WEIGHTS_NAME = os.environ.get("BAS_POSE_WEIGHTS", "yolo11n-pose.pt")
 POSE_WEIGHTS_PATH = os.path.join(WEIGHTS_DIR, POSE_WEIGHTS_NAME)
+# Trained temporal activity model (optional); its spec is the same path with .json
+ACTIVITY_MODEL_PATH = os.environ.get("BAS_ACTIVITY_MODEL", os.path.join(WEIGHTS_DIR, "activity_gru.pt"))
 
 CORS_ORIGINS = [
     o.strip()
