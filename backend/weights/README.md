@@ -5,7 +5,7 @@ Model files are loaded once at backend startup from this directory. Weight files
 | Component | File | Status | Purpose |
 | :--- | :--- | :--- | :--- |
 | Person detector + pose + tracking | `yolo11n-pose.pt` | **In use** | Ultralytics YOLO11 pose: person boxes, 17 COCO keypoints; IDs via ByteTrack |
-| Activity classifier | — | **Rule-based baseline** | Activity labels are derived from pose keypoints by transparent rules (`pipeline.py`). No trained activity model exists yet. |
+| Activity classifier (default) | — | **Rule-based baseline** | Transparent rules on pose keypoints (`services/activity/rules.py`); used whenever no compatible trained model is present |
 | Trained temporal classifier | `activity_gru.pt` + `activity_gru.json` | Optional | GRU over ~2 s of pose features; created by `python -m training.train` (see docs/TRAINING.md) and used automatically when present and compatible |
 
 If `yolo11n-pose.pt` is missing, the backend attempts a one-time download of the official Ultralytics weights into this folder. If that fails (offline), `/api/system/status` reports `yolo_model: false` with the reason, and processing is refused instead of producing fabricated results.
