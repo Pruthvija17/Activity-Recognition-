@@ -251,6 +251,7 @@ export default function ReviewQueue() {
                         {confidencePct(item.confidence)}%
                       </span>
                     </div>
+                    {item.note && <div className="text-xs text-brand-alert/80 mb-1">Why: {item.note}</div>}
                     <div className="text-xs text-brand-secondary flex flex-wrap gap-x-3 gap-y-1">
                       <span className="font-semibold text-brand-primary">{item.person}</span>
                       <span className="font-mono">
@@ -309,6 +310,9 @@ export default function ReviewQueue() {
                     <div className="text-lg">
                       <ActivityLabel name={selectedEvent.original_activity ?? selectedEvent.activity_type} />
                     </div>
+                    {selectedEvent.note && (
+                      <div className="text-xs text-brand-secondary mt-1">Reason: {selectedEvent.note}</div>
+                    )}
                   </div>
                   <div className="text-right text-sm">
                     <div className="text-xs text-brand-muted">Confidence</div>

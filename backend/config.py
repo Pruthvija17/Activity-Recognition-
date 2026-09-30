@@ -34,3 +34,10 @@ def setup_logging() -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def utcnow():
+    """Current UTC time as a naive datetime (the database stores naive UTC; APIs append 'Z')."""
+    import datetime
+
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)

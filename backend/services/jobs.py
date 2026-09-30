@@ -4,7 +4,6 @@ A single worker thread processes one video at a time (inference is CPU-bound, so
 jobs in parallel would only slow each one down). State lives in the database so the UI can
 poll it and so it survives page reloads; a backend restart marks unfinished jobs as failed.
 """
-import datetime
 import logging
 import os
 import queue
@@ -16,6 +15,7 @@ from typing import Optional
 import models
 from database import SessionLocal
 from services import media
+from config import utcnow
 
 log = logging.getLogger("bas.jobs")
 
@@ -62,6 +62,7 @@ def save_events(db, experiment_id: str, events: list, confidence_threshold: floa
             status="Review" if needs_review else "Confirmed",
             review_status="pending" if needs_review else "auto",
             frame_number=evt.get("frame_start"),
+            note=evt.get("note"),
         ))
     return len(events)
 
@@ -227,7 +228,7 @@ class JobManager:
             exp.progress = 100.0
             exp.message = message
             exp.engine = meta.get("activity_engine")
-            exp.processed_at = datetime.datetime.utcnow()
+            exp.processed_at = utcnow()
             exp.processing_seconds = round(elapsed, 1)
             db.commit()
             log.info("Processing finished: %s in %.1fs - %d events, %s people, %s sampled frames",

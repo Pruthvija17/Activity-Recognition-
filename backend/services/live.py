@@ -28,6 +28,7 @@ from services.activity.rules import LOW_REACH, UNKNOWN
 from services.activity.segmenter import Sample
 from services.jobs import JobManager, save_events
 from services import media
+from config import utcnow
 
 try:
     import cv2
@@ -103,21 +104,23 @@ class LiveSession:
             elif (w, h) != self.frame_size:
                 frame = cv2.resize(frame, self.frame_size)
                 w, h = self.frame_size
-            # Place the frame at its real-time slot; pad any gap with the previous frame.
+            # Timeline = real elapsed time. The recording (constant self.fps) is padded with the
+            # previous frame up to this moment's slot; a frame arriving early for a slot that is
+            # already recorded is analysed but not written, so the recording never runs ahead.
             now = time.monotonic()
             if self.first_frame_at is None:
                 self.first_frame_at = now
-            slot = int(round((now - self.first_frame_at) * self.fps))
+            t = now - self.first_frame_at
+            slot = int(round(t * self.fps))
             if self.last_frame is not None:
                 while self.written < slot:
                     self.writer.write(self.last_frame)
                     self.written += 1
-            slot = self.written  # arrived early (or first frame): take the next free slot
-            self.writer.write(frame)
-            self.written += 1
+            if self.written <= slot:
+                self.writer.write(frame)
+                self.written += 1
+            slot = min(slot, self.written - 1)
             self.last_frame = frame
-
-            t = slot / self.fps
             t0 = time.perf_counter()
             r = self.model.track(frame, persist=True, classes=[0], verbose=False,
                                  conf=self.cfg.detector_confidence, tracker=self.cfg.tracker)[0]
@@ -133,7 +136,8 @@ class LiveSession:
                         state, t, kxy[i], kconf[i] if kconf is not None else None, xyxy[i])
                     samples = self.tracks.setdefault(tid, [])
                     samples.append(Sample(t=t, frame=slot, label=pred.label,
-                                          confidence=pred.confidence, probs=pred.probs, carry=f.carry))
+                                          confidence=pred.confidence, probs=pred.probs, carry=f.carry,
+                                          reason=pred.reason))
                     label, conf = self._current_activity(samples)
                     x1, y1, x2, y2 = (float(v) for v in xyxy[i])
                     people.append({
@@ -144,6 +148,7 @@ class LiveSession:
                         "activity": "Picking up / placing an object" if label == LOW_REACH else label,
                         "confidence": round(conf, 3),
                         "unknown": label == UNKNOWN,
+                        "reason": pred.reason if label == UNKNOWN else "",
                     })
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.inference_ms = (self.inference_ms + [elapsed_ms])[-20:]
@@ -229,7 +234,7 @@ class LiveManager:
             exp.duration_seconds = round(duration, 3)
             exp.frame_count = session.written
             exp.engine = self.pipeline.get_model_status()["engine"]
-            exp.processed_at = datetime.datetime.utcnow()
+            exp.processed_at = utcnow()
             exp.processing_seconds = round(time.monotonic() - session.started_at, 1)
             if session.frame_index == 0:
                 exp.message = "No camera frames were received, so nothing was analysed."

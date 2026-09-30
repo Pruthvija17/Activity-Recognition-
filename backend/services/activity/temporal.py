@@ -33,18 +33,27 @@ class ActivityGRU(nn.Module):
         return self.head(self.drop(self.embed(x)))
 
 
-def novelty_ratios(emb: torch.Tensor, pred: torch.Tensor, open_set: Optional[dict]) -> torch.Tensor:
-    """Distance of each embedding to the predicted class prototype, relative to that class's threshold.
+def pooled(x: torch.Tensor) -> torch.Tensor:
+    """(batch, time, features) normalised windows -> (batch, 2*features): mean and spread over time."""
+    return torch.cat([x.mean(1), x.std(1, unbiased=False)], dim=1)
 
-    > 1 means further from the class than (almost) every training example: an unfamiliar movement.
+
+def novelty_ratios(pooled_x: torch.Tensor, pred: torch.Tensor, open_set: Optional[dict]) -> torch.Tensor:
+    """How far each window is from its predicted class's typical inputs, relative to that class's
+    threshold (> 1 = further than every training/validation example: an unfamiliar movement).
+
+    Distance = RMS z-score of the pooled window against the class's per-feature mean and spread.
+    Measured on the inputs (not the network's internal state) so it does not depend on training luck.
     """
     ratios = torch.zeros(len(pred))
     if not open_set:
         return ratios
     for i, c in enumerate(pred.tolist()):
-        proto, thr = open_set["prototypes"][c], open_set["thresholds"][c]
-        if proto is not None and thr:
-            ratios[i] = torch.dist(emb[i], torch.tensor(proto)) / thr
+        mu, sd, thr = open_set["means"][c], open_set["stds"][c], open_set["thresholds"][c]
+        if mu is None or not thr:
+            continue
+        z = (pooled_x[i] - torch.tensor(mu)) / torch.tensor(sd)
+        ratios[i] = torch.sqrt((z ** 2).mean()) / thr
     return ratios
 
 
@@ -102,9 +111,8 @@ class TemporalModel:
         if len(seq) < self.window:
             seq = [seq[0]] * (self.window - len(seq)) + seq
         x = ((torch.tensor(seq, dtype=torch.float32) - self.mean) / self.std).unsqueeze(0)
-        emb = self.net.embed(x)
-        probs = torch.softmax(self.net.head(emb), dim=-1)
-        ratio = novelty_ratios(emb, probs.argmax(-1), self.spec.get("open_set"))[0].item()
+        probs = torch.softmax(self.net(x) / float(self.spec.get("temperature", 1.0)), dim=-1)
+        ratio = novelty_ratios(pooled(x), probs.argmax(-1), self.spec.get("open_set"))[0].item()
         return dict(zip(self.classes, probs[0].tolist())), ratio
 
     def predict(self, vectors: Sequence[Sequence[float]]) -> Dict[str, float]:

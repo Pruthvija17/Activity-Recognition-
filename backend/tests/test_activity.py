@@ -13,7 +13,9 @@ from services.activity.rules import (
     HANDLING, LOW_REACH, PICKING, PLACING, REACHING, SITTING, STANDING, UNKNOWN, WALKING,
 )
 from services.activity.segmenter import Sample, SegmentConfig, segment_track
-from services.activity.unknown import OpenSetClassifier
+from services.activity.unknown import (
+    REASON_AMBIGUOUS, REASON_LOW_PROB, REASON_NOT_VISIBLE, REASON_UPPER_BODY, OpenSetClassifier,
+)
 
 DT = 0.125  # 8 samples per second
 
@@ -112,14 +114,14 @@ def test_fall_like_horizontal_torso_is_unknown():
     f = skeleton(trunk_deg=90, wrists=((x0 + 60, y0 + 10), (x0 + 70, y0 - 10)))
     p = settled(run([f] * 16))
     assert p.label == UNKNOWN
-    assert "entropy" in p.reason or "probability" in p.reason
+    assert p.reason in (REASON_AMBIGUOUS, REASON_LOW_PROB)
 
 
 def test_invisible_torso_is_unknown():
     k, c, box = skeleton()
     c[5:7] = 0.1  # shoulders not detected
     p = settled(run([(k, c, box)] * 4))
-    assert p.label == UNKNOWN and "not visible" in p.reason
+    assert p.label == UNKNOWN and p.reason == REASON_NOT_VISIBLE
 
 
 def test_probabilities_are_a_distribution():
@@ -214,3 +216,45 @@ def test_pick_place_without_context_has_reduced_confidence():
     segs = segment_track(stream([(LOW_REACH, 2.0)]), CFG)
     assert segs[0].label in (PICKING, PLACING)
     assert segs[0].confidence < 0.6
+
+
+def _upper_body(frames):
+    """Hide hips, knees and ankles (a person close to a desk webcam)."""
+    out = []
+    for k, c, box in frames:
+        c = c.copy()
+        c[11:17] = 0.0
+        out.append((k, c, box))
+    return out
+
+
+def test_upper_body_reaching_is_still_recognised():
+    x0, y0 = 300, 300
+    f = skeleton(wrists=((x0 - 35, y0 + 10), (x0 + 125, y0 - 90)))
+    p = settled(run(_upper_body([f] * 16)))
+    assert p.label == REACHING
+
+
+def test_upper_body_handling_is_still_recognised():
+    x0, y0 = 300, 300
+    frames = []
+    for i in range(24):
+        d = 20 * math.sin(2 * math.pi * 1.5 * i * DT)
+        frames.append(skeleton(wrists=((x0 - 15 + d, y0 - 50 - d / 2), (x0 + 15 - d, y0 - 50 + d / 2))))
+    assert settled(run(_upper_body(frames))).label == HANDLING
+
+
+def test_upper_body_idle_is_unknown_with_reason():
+    """Arms down, lower body hidden: standing vs sitting can't be told -> Unknown, and says why."""
+    p = settled(run(_upper_body([skeleton()] * 16)))
+    assert p.label == UNKNOWN and p.reason == REASON_UPPER_BODY
+
+
+def test_unknown_segments_carry_their_reason():
+    samples = stream([(STANDING, 2.0), (UNKNOWN, 2.0)])
+    for s_ in samples:
+        if s_.label == UNKNOWN:
+            s_.reason = REASON_UPPER_BODY
+    segs = segment_track(samples, CFG)
+    assert segs[-1].label == UNKNOWN and segs[-1].note == REASON_UPPER_BODY
+    assert segs[0].note == ""

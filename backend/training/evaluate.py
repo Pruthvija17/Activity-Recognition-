@@ -5,7 +5,6 @@
 By default only the model's held-out test videos (recorded in its spec) are evaluated.
 """
 import argparse
-import datetime
 import os
 import sys
 from typing import List, Optional
@@ -16,6 +15,7 @@ from services.activity.rules import UNKNOWN  # noqa: E402
 from services.activity.unknown import OpenSetClassifier  # noqa: E402
 
 from training.dataset import CLASSES, UNKNOWN_INDEX, Windows  # noqa: E402
+from config import utcnow
 
 
 def classification_metrics(y_true: List[int], y_pred: List[int], classes: List[str]) -> dict:
@@ -87,7 +87,7 @@ def markdown_report(spec: dict, test: dict, title: str = "Activity model evaluat
     lines = [
         f"# {title}",
         "",
-        f"Generated {datetime.datetime.utcnow().isoformat(timespec='seconds')}Z · model trained {spec.get('trained_at', '?')}",
+        f"Generated {utcnow().isoformat(timespec='seconds')}Z · model trained {spec.get('trained_at', '?')}",
         "",
         f"- Split: **{data.get('split', '?')}** - train {len(data.get('train_videos', []))}, "
         f"validation {len(data.get('val_videos', []))}, test {len(data.get('test_videos', []))} video(s)",

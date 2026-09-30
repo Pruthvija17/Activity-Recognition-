@@ -71,6 +71,8 @@ def migrate_db():
             cursor.execute("UPDATE activity_events SET review_status = CASE WHEN status = 'Review' THEN 'pending' ELSE 'auto' END")
         if "original_activity" not in evt_cols:
             cursor.execute("ALTER TABLE activity_events ADD COLUMN original_activity VARCHAR")
+        if "note" not in evt_cols:
+            cursor.execute("ALTER TABLE activity_events ADD COLUMN note VARCHAR")
         if "reviewed_at" not in evt_cols:
             cursor.execute("ALTER TABLE activity_events ADD COLUMN reviewed_at DATETIME")
 

@@ -207,3 +207,17 @@ def test_processing_creates_h264_preview(client, sample_video):
     served = client.get(f"/api/videos/{up['video_id']}", headers={"Range": "bytes=0-3000"})
     assert served.status_code == 206
     assert b"avc1" in served.content  # H.264 sample entry in the MP4 header (faststart)
+
+
+def test_delete_experiment_removes_data_and_files(client, sample_video):
+    import os as _os
+
+    with open(sample_video, "rb") as f:
+        up = client.post("/api/videos/upload", files={"file": ("delete-me.mp4", f.read(), "video/mp4")}).json()
+    vid = up["video_id"]
+    path = next(p for p in _os.listdir(_os.environ["BAS_UPLOADS_DIR"]) if p.startswith(vid))
+    r = client.delete(f"/api/experiments/{vid}")
+    assert r.status_code == 200 and r.json()["files_removed"] == 1
+    assert not _os.path.exists(_os.path.join(_os.environ["BAS_UPLOADS_DIR"], path))
+    assert client.get(f"/api/videos/{vid}/status").status_code == 404
+    assert client.delete(f"/api/experiments/{vid}").status_code == 404

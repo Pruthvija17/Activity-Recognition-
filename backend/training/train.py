@@ -9,7 +9,6 @@ then write weights/activity_gru.pt + activity_gru.json and docs/MODEL_EVALUATION
 The backend uses the model automatically after a restart.
 """
 import argparse
-import datetime
 import json
 import logging
 import os
@@ -24,16 +23,17 @@ from torch import nn  # noqa: E402
 
 import config  # noqa: E402
 from services.activity.sequence import FEATURE_DIM, FEATURE_VERSION  # noqa: E402
-from services.activity.temporal import ActivityGRU, novelty_ratios, spec_path_for  # noqa: E402
+from services.activity.temporal import ActivityGRU, novelty_ratios, pooled, spec_path_for  # noqa: E402
 
 from training.dataset import CLASSES, UNKNOWN_INDEX, Windows  # noqa: E402
 from training.evaluate import classification_metrics, evaluate_windows, markdown_report  # noqa: E402
+from config import utcnow
 
 log = logging.getLogger("bas.training")
 
 MIN_VIDEOS_FOR_VIDEO_SPLIT = 3
 RECOMMENDED_WINDOWS_PER_CLASS = 20
-OPEN_SET_MARGIN = 1.25
+OPEN_SET_MARGIN = 1.5
 
 
 class InsufficientData(RuntimeError):
@@ -81,7 +81,7 @@ def _known(w: Windows) -> Tuple[torch.Tensor, torch.Tensor]:
 
 def train_model(windows: Windows, segments: List[str], *, window: int, stride: int, sample_fps: float,
                 hidden: int = 64, layers: int = 1, epochs: int = 80, lr: float = 2e-3, batch_size: int = 64,
-                patience: int = 12, seed: int = 0, allow_segment_split: bool = False) -> Tuple[dict, dict, dict]:
+                patience: int = 25, seed: int = 0, allow_segment_split: bool = False) -> Tuple[dict, dict, dict]:
     """Returns (state_dict, spec, test_metrics)."""
     torch.manual_seed(seed)
     random.seed(seed)
@@ -129,29 +129,53 @@ def train_model(windows: Windows, segments: List[str], *, window: int, stride: i
     net.load_state_dict(best_state)
     net.eval()
 
-    # Open-set calibration: per-class prototype (mean embedding) and a distance threshold that
-    # covers ~99 % of that class's training windows, plus a safety margin.
+    # Confidence calibration (temperature scaling): one scalar T fitted on the validation videos so
+    # that softmax confidences match how often the model is actually right. Without it, early
+    # stopping leaves soft probabilities and the entropy rule flags correct predictions as Unknown.
     with torch.no_grad():
-        emb = net.embed(Xtr_n)
-    prototypes, thresholds = [], []
+        val_logits = net(Xva_n)
+    log_t = torch.zeros(1, requires_grad=True)
+    t_opt = torch.optim.LBFGS([log_t], lr=0.1, max_iter=100)
+
+    def nll():
+        t_opt.zero_grad()
+        loss = nn.functional.cross_entropy(val_logits / log_t.exp(), yva)
+        loss.backward()
+        return loss
+
+    t_opt.step(nll)
+    # Bounded: a perfectly separable validation set would otherwise push T towards 0 (over-confidence).
+    temperature = float(log_t.detach().exp().clamp(0.25, 5.0))
+
+    # Open-set calibration in input space: per-class mean / spread of the time-pooled normalised
+    # windows (training + validation), and a threshold = the largest distance of any of that class's
+    # own windows times a margin. Windows further than that are "unlike anything trained".
+    known_x = torch.cat([Xtr_n, Xva_n])
+    known_y = torch.cat([ytr, yva])
+    pooled_all = pooled(known_x)
+    floor = pooled_all.std(0).clamp_min(1e-3) * 0.25  # avoid exploding z on near-constant features
+    means, stds, thresholds = [], [], []
     for c in range(len(CLASSES)):
-        e = emb[ytr == c]
-        if len(e) == 0:
-            prototypes.append(None)
+        pc = pooled_all[known_y == c]
+        if len(pc) < 2:
+            means.append(None)
+            stds.append(None)
             thresholds.append(None)
             continue
-        proto = e.mean(0)
-        d = torch.linalg.norm(e - proto, dim=1)
-        prototypes.append(proto.tolist())
-        thresholds.append(float(torch.quantile(d, 0.99)) * OPEN_SET_MARGIN + 1e-6)
-    open_set = {"method": "distance to class prototype in GRU embedding space",
-                "margin": OPEN_SET_MARGIN, "prototypes": prototypes, "thresholds": thresholds}
+        mu = pc.mean(0)
+        sd = torch.maximum(pc.std(0), floor)
+        dist = torch.sqrt((((pc - mu) / sd) ** 2).mean(1))
+        means.append(mu.tolist())
+        stds.append(sd.tolist())
+        thresholds.append(float(dist.max()) * OPEN_SET_MARGIN + 1e-6)
+    open_set = {"method": "RMS z-distance of pooled input window to class profile (train + validation)",
+                "margin": OPEN_SET_MARGIN, "means": means, "stds": stds, "thresholds": thresholds}
 
     def analyze(seq):
         with torch.no_grad():
-            e = net.embed(norm(torch.tensor([seq], dtype=torch.float32)))
-            p = torch.softmax(net.head(e), -1)
-            ratio = novelty_ratios(e, p.argmax(-1), open_set)[0].item()
+            x = norm(torch.tensor([seq], dtype=torch.float32))
+            p = torch.softmax(net(x) / temperature, -1)
+            ratio = novelty_ratios(pooled(x), p.argmax(-1), open_set)[0].item()
         return dict(zip(CLASSES, p[0].tolist())), ratio
 
     test_metrics = evaluate_windows(analyze, te)
@@ -172,9 +196,10 @@ def train_model(windows: Windows, segments: List[str], *, window: int, stride: i
         "hidden": hidden,
         "layers": layers,
         "mean": mean.tolist(),
+        "temperature": round(temperature, 4),
         "open_set": open_set,
         "std": std.tolist(),
-        "trained_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "trained_at": utcnow().isoformat(timespec="seconds") + "Z",
         "metrics": {
             "val_macro_f1": round(best_f1, 4),
             "test_accuracy": test_metrics["accuracy"],

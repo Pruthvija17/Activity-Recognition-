@@ -182,6 +182,7 @@ export interface ReviewEvent {
   person: string;
   activity_type: string;
   original_activity: string | null;
+  note: string | null; // why an event is Unknown, e.g. "only upper body visible"
   start_time: string;
   end_time: string;
   start_seconds: number | null;
@@ -254,6 +255,7 @@ export interface LivePerson {
   activity: string;
   confidence: number;
   unknown: boolean;
+  reason: string;
 }
 
 export interface LiveResult {

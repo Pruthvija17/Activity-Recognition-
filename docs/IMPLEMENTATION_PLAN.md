@@ -1,5 +1,7 @@
 # BAS AI — Implementation Plan v2 (post-inspection)
 
+> **Status 2026-09-30: milestones M1–M9 complete.** Open items need the team's real footage: accuracy of the activity rules on BAS-style clips, and training/evaluating the temporal model (see `docs/TEST_REPORT.md`, "Known limitations").
+
 Supersedes `implementation_plan.md` and builds on `BAS_AI_Complete_Implementation_Plan.md`.
 Written 2026-09-29 after a full inspection of the codebase and a live run of the pipeline.
 
@@ -150,12 +152,15 @@ frontend/src/
 - **Found and fixed:** a closed-set trained model forced an unseen (fall-like) pose into a known class (Unknown recall 0 %). Added prototype-distance novelty detection calibrated at training time → Unknown recall 100 % on the synthetic test, false-Unknown ≤ 20 %.
 - **Real-data run:** exporting the one reviewed label from the live DB and training correctly refuses ("only 1 labelled video; at least 3 needed"). Synthetic accuracy (100 % on 12 windows) proves the machinery, not real-world performance.
 
-### M9 — End-to-end tests, polish, demo
+### M9 — End-to-end tests, polish, demo — ✅ done
 - `pytest` API tests (TestClient, temp DB, tiny generated video) covering health, status, upload validation, job lifecycle, review actions, analytics, reports.
 - Manual acceptance run of plan §23 tests A–J and §30 Definition of Done with the user's footage; results written to `docs/TEST_REPORT.md`.
 - Frontend: fix oxlint `set-state-in-effect` warnings, page title "BAS AI — Activity Intelligence", loading/empty states, remove unused `App.css`/assets.
 - README: setup, run, recording guidelines, architecture, limitations (CPU speed, rule baseline accuracy).
 - Demo script following plan §29.
+- **Result:** `scripts/smoke_test.py` (22 checks, tests A–J, cleans up), `docs/TEST_REPORT.md`, `docs/DEMO.md`; data verified unchanged across a backend restart; 85 backend tests; frontend lazy-loads pages (first load 248 kB instead of one > 500 kB bundle), Vite template leftovers removed, BAS favicon, layout fixes; deprecated `utcnow` and Pydantic config removed, unused schemas deleted; requirements pins verified against the environment; `DELETE /api/experiments/{id}` + Delete button.
+- **From the user's first real webcam session:** a person close to the camera (hips visible 34 % of the time, knees never) was Unknown most of the time with no explanation → added upper-body mode (arm activities still judged) and stored Unknown reasons on events (Review Queue, detail page, reports, live panel).
+- **Found and fixed:** live recording could run ahead of real time when frames arrived faster than requested; trained-model open-set was unstable across seeds → input-space novelty calibrated on train + validation, temperature scaling of confidences (bounded), longer early-stopping patience; the synthetic training test now uses a dataset that meets the recommended size and is stable across 5 seeds.
 
 ## 6. What I need from you along the way
 

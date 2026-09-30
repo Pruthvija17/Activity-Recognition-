@@ -15,6 +15,13 @@ from .rules import INTERNAL_CLASSES, UNKNOWN, class_scores, entropy_bits, softma
 
 DEFAULT_ENTROPY_BITS = {"Low": 2.5, "Medium": 1.75, "High": 1.0}
 
+# Short reasons stored on Unknown events (shown to reviewers).
+REASON_NOT_VISIBLE = "person not clearly visible"
+REASON_UPPER_BODY = "only upper body visible"
+REASON_AMBIGUOUS = "ambiguous between activities"
+REASON_LOW_PROB = "no activity matched well"
+REASON_UNFAMILIAR = "unlike trained examples"
+
 
 @dataclass
 class Prediction:
@@ -44,8 +51,7 @@ class OpenSetClassifier:
     @staticmethod
     def not_visible(classes=INTERNAL_CLASSES) -> Prediction:
         uniform = {c: 1.0 / len(classes) for c in classes}
-        return Prediction(UNKNOWN, 0.0, classes[0], entropy_bits(uniform), uniform,
-                          reason="pose not visible (shoulders/hips not detected)")
+        return Prediction(UNKNOWN, 0.0, classes[0], entropy_bits(uniform), uniform, reason=REASON_NOT_VISIBLE)
 
     def decide(self, probs: Dict[str, float]) -> Prediction:
         """Open-set decision on any class distribution (rule scores or a trained model)."""
@@ -53,13 +59,16 @@ class OpenSetClassifier:
         conf = probs[best]
         ent = entropy_bits(probs)
         if ent > self.entropy_threshold:
-            return Prediction(UNKNOWN, conf, best, ent, probs, reason=f"ambiguous (entropy {ent:.2f} bits)")
+            return Prediction(UNKNOWN, conf, best, ent, probs, reason=REASON_AMBIGUOUS)
         if conf < self.min_probability:
-            return Prediction(UNKNOWN, conf, best, ent, probs, reason=f"low probability ({conf:.2f})")
+            return Prediction(UNKNOWN, conf, best, ent, probs, reason=REASON_LOW_PROB)
         return Prediction(best, conf, best, ent, probs)
 
     def predict(self, features: PoseFeatures) -> Prediction:
         """Rule-based prediction for one pose."""
         if not features.visible:
             return self.not_visible()
-        return self.decide(softmax(class_scores(features), self.temperature))
+        pred = self.decide(softmax(class_scores(features), self.temperature))
+        if pred.label == UNKNOWN and features.upper_body_only:
+            pred.reason = REASON_UPPER_BODY
+        return pred

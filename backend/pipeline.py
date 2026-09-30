@@ -129,6 +129,7 @@ def build_events(tracks: Dict[int, List[Sample]], cfg: EngineConfig, sample_inte
                 "duration": round(seg.duration, 3),
                 "frame_start": seg.frame_start,
                 "frame_end": seg.frame_end,
+                "note": seg.note or None,
             })
     events.sort(key=lambda e: (e["start_seconds"], e["person_id"]))
     return events, len(order), len(tracks) - len(kept), names
@@ -314,7 +315,7 @@ class AIVideoPipeline:
                         unknown_samples += 1
                     tracks.setdefault(tid, []).append(Sample(
                         t=t, frame=frame, label=pred.label, confidence=pred.confidence,
-                        probs=pred.probs, carry=f.carry,
+                        probs=pred.probs, carry=f.carry, reason=pred.reason,
                     ))
                     detections += 1
         except Exception as e:

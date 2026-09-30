@@ -131,3 +131,18 @@ def test_live_refused_when_model_not_ready(client, monkeypatch):
 
     monkeypatch.setattr(runtime.ai_pipeline, "model_ready", False)
     assert client.post("/api/live/sessions", json={"fps": 5}).status_code == 503
+
+
+def test_frames_faster_than_requested_rate_do_not_stretch_time(client, frame_jpeg):
+    """Sending as fast as possible (faster than 2 fps) must not make the recording longer than real time."""
+    s = _start(client, fps=2)
+    with client.websocket_connect(s["ws_path"]) as ws:
+        t_first = time.monotonic()
+        for _ in range(10):
+            ws.send_bytes(frame_jpeg)
+            ws.receive_json()
+        elapsed = time.monotonic() - t_first
+        ws.send_text("stop")
+        summary = ws.receive_json()
+    assert summary["frames"] == 10
+    assert summary["duration_seconds"] <= elapsed + 0.6

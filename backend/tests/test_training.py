@@ -98,7 +98,8 @@ def dataset(tmp_path_factory):
     cache = str(tmp / "features")
     os.makedirs(cache)
     rows = []
-    for v in range(6):
+    # 12 short sessions: enough windows per class for calibration to be meaningful.
+    for v in range(12):
         rows += make_video(tmp, f"session{v}", seed=v, cache_dir=cache)
     labels = tmp / "labels.csv"
     with open(labels, "w", newline="", encoding="utf-8") as fh:
@@ -121,7 +122,7 @@ def trained(dataset):
 def test_feature_vector_layout():
     k, c, box = skeleton()
     v = feature_vector(TrackFeatures().update(0.0, k, c, box))
-    assert len(v) == FEATURE_DIM and v[-1] == 1.0
+    assert len(v) == FEATURE_DIM and v[-2] == 1.0 and v[-1] == 0.0  # visible, not upper-body-only
     k2, c2, box2 = skeleton()
     c2[5:7] = 0.0  # no shoulders -> not visible -> all zeros
     assert feature_vector(TrackFeatures().update(0.0, k2, c2, box2)) == [0.0] * FEATURE_DIM
@@ -153,7 +154,7 @@ def test_split_is_by_video_and_refuses_too_few_videos(dataset, trained):
 
     _, labels, cache = dataset
     windows, segments, fps = build_windows(labels, cache, window=16, stride=4)
-    two = {g for g in sorted(set(windows.groups))[:2]}
+    two = set(sorted(set(windows.groups))[:2])
     keep = [i for i, g in enumerate(windows.groups) if g in two]
     windows.X = [windows.X[i] for i in keep]
     windows.y = [windows.y[i] for i in keep]
@@ -196,8 +197,11 @@ def test_model_loads_and_drives_the_engine(trained):
 
     state = engine.new_track()
     labels = []
+    rng = random.Random(1)
     for i in range(24):
         k, c, box = _pose(SITTING, i, 24, 300, 300, 1.0)
+        # Real detector output always jitters a little; a perfectly still pose is itself "unfamiliar".
+        k = k + [[rng.gauss(0, 2), rng.gauss(0, 2)] for _ in range(17)]
         _, pred, _ = engine.observe(state, i * DT, k, c, box)
         labels.append(pred.label)
     assert labels[-1] == SITTING

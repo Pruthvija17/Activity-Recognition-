@@ -422,7 +422,7 @@ export default function Experiments() {
                         {v.status === 'completed' ? v.events_count : '—'}
                       </td>
                       <td className="px-6 py-3">
-                        <div className="flex items-center gap-3 text-xs font-bold">
+                        <div className="flex items-center gap-3 text-xs font-bold whitespace-nowrap">
                           <Link
                             to={`/experiments/${v.video_id}`}
                             className="flex items-center gap-1 text-sky-blue hover:text-deep-blue"

@@ -7,7 +7,6 @@ from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-import datetime
 import logging
 
 import config
@@ -26,6 +25,7 @@ from api import experiments as experiments_api
 from api import reports as reports_api
 from api import live as live_api
 from api import training as training_api
+from config import utcnow
 
 API_VERSION = "2.1.0"
 
@@ -151,7 +151,7 @@ def system_status():
         "ffmpeg": media.ffmpeg_available(),
         "cuda": hw.cuda_available,
         "device": hw.cuda_device_name or "CPU",
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": utcnow().isoformat() + "Z",
     }
 
 
@@ -232,7 +232,7 @@ def update_settings(body: schemas.SystemSettingsUpdate, db: Session = Depends(ge
     settings.confidence_threshold = body.confidence_threshold
     settings.unknown_sensitivity = body.unknown_sensitivity
     settings.camera_source = body.camera_source
-    settings.updated_at = datetime.datetime.utcnow()
+    settings.updated_at = utcnow()
     db.commit()
     db.refresh(settings)
 

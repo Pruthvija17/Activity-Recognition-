@@ -20,6 +20,9 @@ L_KNEE, R_KNEE = 13, 14
 L_ANK, R_ANK = 15, 16
 
 MIN_TORSO_PX = 8.0
+# Typical ratio of torso length (shoulder-mid to hip-mid) to shoulder width, used to estimate the
+# torso scale when the hips are out of view (e.g. a person close to a desk webcam).
+TORSO_PER_SHOULDER_WIDTH = 1.25
 
 
 def _dist(a: Point, b: Point) -> float:
@@ -66,6 +69,9 @@ class PoseFeatures:
     speed: Optional[float] = None          # body (hip-mid) speed in L per second
     hand_activity: Optional[float] = None  # wrist motion relative to the body, L per second
     torso_px: float = 0.0
+    # Hips not visible: scale estimated from shoulder width, hip position assumed below the shoulders.
+    # Only arm-based activities can be judged in this mode.
+    upper_body_only: bool = False
     # 17 x (x, y, visible): keypoints relative to the hip centre in torso lengths (zeros if hidden)
     keypoints: Optional[List[float]] = None
 
@@ -108,11 +114,17 @@ class TrackFeatures:
 
         ls, rs, lh, rh = p(L_SH), p(R_SH), p(L_HIP), p(R_HIP)
         sh, hip = _mid(ls, rs), _mid(lh, rh)
+        upper_only = False
+        if (not hip or (sh and _dist(sh, hip) < MIN_TORSO_PX)) and ls and rs and _dist(ls, rs) >= MIN_TORSO_PX:
+            est = _dist(ls, rs) * TORSO_PER_SHOULDER_WIDTH
+            hip = (sh[0], sh[1] + est)
+            lh = rh = None
+            upper_only = True
         if not sh or not hip or _dist(sh, hip) < MIN_TORSO_PX:
             return PoseFeatures(visible=False, aspect=aspect)
 
         L = _dist(sh, hip)
-        f = PoseFeatures(visible=True, aspect=aspect, torso_px=L)
+        f = PoseFeatures(visible=True, aspect=aspect, torso_px=L, upper_body_only=upper_only)
         kps: List[float] = []
         for i in range(17):
             q = p(i)
@@ -120,8 +132,9 @@ class TrackFeatures:
         f.keypoints = kps
 
         # Torso orientation: angle between hip->shoulder and straight up.
-        cos_up = -(sh[1] - hip[1]) / L
-        f.trunk_angle = math.degrees(math.acos(max(-1.0, min(1.0, cos_up))))
+        if not upper_only:  # with an estimated hip the torso angle is meaningless
+            cos_up = -(sh[1] - hip[1]) / L
+            f.trunk_angle = math.degrees(math.acos(max(-1.0, min(1.0, cos_up))))
 
         # Legs
         knee_angles, hip_angles, thigh_ratios, thigh_h = [], [], [], []

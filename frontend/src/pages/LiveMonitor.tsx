@@ -413,8 +413,10 @@ export default function LiveMonitor() {
           {!cam.stream && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/60 text-sm text-center px-8">
               <CameraOff className="w-10 h-10 text-white/30" />
-              Camera is off. Press <strong className="text-white/80">Start camera</strong> and allow camera access when the
-              browser asks.
+              <p>
+                Camera is off. Press <strong className="text-white/80">Start camera</strong> and allow camera access when
+                the browser asks.
+              </p>
             </div>
           )}
           {running && (
@@ -451,6 +453,7 @@ export default function LiveMonitor() {
                       )}
                       {p.unknown ? 'Unknown Activity' : p.activity}
                     </div>
+                    {p.unknown && p.reason && <div className="text-xs text-brand-alert/80 mt-0.5">{p.reason}</div>}
                   </li>
                 ))}
               </ul>

@@ -165,6 +165,10 @@ export const api = {
       `/api/experiments/${encodeURIComponent(experimentId)}/workflow`,
       json('PUT', { expected_sequence: steps }),
     ),
+  deleteExperiment: (experimentId: string) =>
+    request<{ deleted: string; files_removed: number }>(`/api/experiments/${encodeURIComponent(experimentId)}`, {
+      method: 'DELETE',
+    }),
   resetWorkflow: (experimentId: string) =>
     request<WorkflowResult>(`/api/experiments/${encodeURIComponent(experimentId)}/workflow`, { method: 'DELETE' }),
 

@@ -68,6 +68,11 @@ def class_scores(f: PoseFeatures) -> Dict[str, float]:
         HANDLING: working * (0.3 + 0.7 * still) * (1 - 0.5 * reaching),
     }
 
+    if f.upper_body_only:
+        # Without hips/legs, standing / sitting / walking / low reaches cannot be judged.
+        for c in (STANDING, SITTING, WALKING, LOW_REACH):
+            scores[c] = 0.0
+
     # Atypical motion or body orientation matches none of the known activities:
     # very fast arm movement while not walking (e.g. flailing), or a near-horizontal torso (fall).
     atypical = max(ramp(f.hand_activity, 1.5, 3.0) * (1 - moving), ramp(f.trunk_angle, 60, 80))

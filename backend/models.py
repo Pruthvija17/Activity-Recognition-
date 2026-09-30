@@ -1,7 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Text
 from sqlalchemy.orm import relationship
 from database import Base
-import datetime
+from config import utcnow
 
 
 class Experiment(Base):
@@ -11,7 +11,7 @@ class Experiment(Base):
     name = Column(String)
     # Lifecycle: uploaded -> queued -> processing -> completed | failed
     status = Column(String, default="uploaded")
-    start_time = Column(DateTime, default=datetime.datetime.utcnow)  # created / uploaded at
+    start_time = Column(DateTime, default=utcnow)  # created / uploaded at
     video_filename = Column(String, nullable=True)  # Original filename of the uploaded video
     video_path = Column(String, nullable=True)       # Absolute path to the uploaded file
     source = Column(String, default="upload")        # upload | camera
@@ -68,6 +68,7 @@ class ActivityEvent(Base):
     review_status = Column(String, default="auto", index=True)
     original_activity = Column(String, nullable=True)  # model prediction before an operator reclassified it
     reviewed_at = Column(DateTime, nullable=True)
+    note = Column(String, nullable=True)  # why an event is Unknown, e.g. "only upper body visible"
 
     experiment = relationship("Experiment", back_populates="events")
     participant = relationship("Participant", back_populates="events")
@@ -81,7 +82,7 @@ class ExperimentConfig(Base):
     experiment_id = Column(String, ForeignKey("experiments.id"), unique=True)
     # JSON-encoded list of activity names in expected order
     expected_sequence = Column(Text, nullable=True)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     experiment = relationship("Experiment", back_populates="config")
 
@@ -96,5 +97,5 @@ class SystemSettings(Base):
     # Unknown sensitivity: 'Low' | 'Medium' | 'High'
     unknown_sensitivity = Column(String, default="Medium")
     # Active camera / source label
-    camera_source = Column(String, default="Camera 01 (Overhead Station)")
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    camera_source = Column(String, default="")
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

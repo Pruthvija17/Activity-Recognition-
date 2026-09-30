@@ -10,6 +10,7 @@ import models
 from database import get_db
 from services.activity.rules import ACTIVITIES, UNKNOWN
 from services.analytics import person_label
+from config import utcnow
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -35,6 +36,7 @@ def event_dict(e: models.ActivityEvent, tracked_id: Optional[str], filename: Opt
         "person": person_label(tracked_id, e.person_id, None, False),
         "activity_type": e.activity_type,
         "original_activity": e.original_activity,
+        "note": e.note,
         "start_time": e.start_time,
         "end_time": e.end_time,
         "start_seconds": e.start_seconds,
@@ -109,6 +111,6 @@ def review_event(event_id: str, body: ReviewAction, db: Session = Depends(get_db
             e.activity_type = body.activity
             e.review_status = "reclassified"
         e.status = "Confirmed"
-    e.reviewed_at = datetime.datetime.utcnow()
+    e.reviewed_at = utcnow()
     db.commit()
     return event_dict(e, tracked_id, filename)

@@ -5,6 +5,7 @@ AI human-activity recognition for on-board BAS experiments: person detection, mu
 - **Backend:** FastAPI + SQLite + Ultralytics YOLO11-pose (ByteTrack) — `backend/`
 - **Frontend:** React + Vite + Tailwind — `frontend/`
 - **Plan / status:** [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+- **Test report:** [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) · **Demo script:** [`docs/DEMO.md`](docs/DEMO.md) · **Training a model:** [`docs/TRAINING.md`](docs/TRAINING.md)
 
 ## First-time setup (Windows)
 
@@ -47,13 +48,19 @@ cd backend; ..\.venv\Scripts\python -m pytest tests -q
 
 Tests use a temporary database and uploads folder, never the real ones.
 
+End-to-end smoke test against the running app (upload, processing, review, analytics, reports, live session; removes what it creates):
+
+```powershell
+cd backend; ..\.venv\Scripts\python scripts\smoke_test.py
+```
+
 ## Recording test footage
 
 Fixed camera, whole body in view, good light. Hold each activity for 5–10 s. Record as **H.264 MP4** where possible: iPhones default to HEVC, which Chrome on Windows usually cannot play back in the Review Queue (analysis still works). On iPhone: Settings → Camera → Formats → *Most Compatible*.
 
 ## Processing videos
 
-Experiments → drop or select a video → **Upload & Process**. Upload progress, queue position and processing progress are shown live; jobs run one at a time in the background and survive page reloads. A backend restart marks unfinished jobs as failed (use **Retry**).
+Experiments → drop or select a video → **Upload & Process**. Upload progress, queue position and processing progress are shown live; jobs run one at a time in the background and survive page reloads. A backend restart marks unfinished jobs as failed (use **Retry**). **Details** opens an experiment: video, per-person timeline, workflow check, events, reports, re-process and delete.
 
 ## Live monitoring (webcam)
 

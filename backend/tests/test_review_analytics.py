@@ -1,4 +1,3 @@
-import datetime
 import uuid
 
 import pytest
@@ -6,6 +5,7 @@ import pytest
 import models
 from database import SessionLocal
 from services.jobs import save_events
+from config import utcnow
 
 THRESHOLD = 0.60
 
@@ -23,7 +23,7 @@ def experiment(client):
     db = SessionLocal()
     try:
         db.add(models.Experiment(id=exp_id, name="lab.mp4", video_filename="lab.mp4", status="completed",
-                                 processed_at=datetime.datetime.utcnow()))
+                                 processed_at=utcnow()))
         db.flush()
         save_events(db, exp_id, [
             _evt("Person 01", "Walking", 0, 3, 0.90),

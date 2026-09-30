@@ -14,6 +14,7 @@ import models
 from services.activity.rules import UNKNOWN
 from services.analytics import ACTIVITY_COLORS, compute_analytics
 from services.experiment_data import event_rows, workflow_result
+from config import utcnow
 
 
 def _iso(dt: Optional[datetime.datetime]) -> Optional[str]:
@@ -45,6 +46,7 @@ def build_report(db: Session, exp: models.Experiment, confidence_threshold: floa
             "confidence": round(e.confidence or 0.0, 4),
             "review_status": e.review_status,
             "original_activity": e.original_activity,
+            "note": e.note,
         }
 
     log = [log_entry(e, tid) for e, tid in kept]
@@ -55,7 +57,7 @@ def build_report(db: Session, exp: models.Experiment, confidence_threshold: floa
 
     return {
         "report_id": f"REP-{exp.id}",
-        "generated_at": _iso(datetime.datetime.utcnow()),
+        "generated_at": _iso(utcnow()),
         "experiment": {
             "experiment_id": exp.id,
             "video": exp.video_filename or exp.name,
@@ -112,7 +114,7 @@ def build_report(db: Session, exp: models.Experiment, confidence_threshold: floa
 
 CSV_COLUMNS = ["report_id", "experiment_id", "video", "person", "activity", "start_time", "end_time",
                "start_seconds", "end_seconds", "duration_seconds", "confidence", "review_status",
-               "original_activity"]
+               "original_activity", "note"]
 
 
 def to_csv(report: dict) -> str:

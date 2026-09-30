@@ -23,6 +23,7 @@ class Sample:
     confidence: float          # probability of `label` (best known class prob for Unknown)
     probs: Dict[str, float]
     carry: float = 0.0
+    reason: str = ""
 
 
 @dataclass
@@ -44,6 +45,7 @@ class Segment:
     frame_end: int
     confidence: float
     samples: List[Sample] = field(default_factory=list, repr=False)
+    note: str = ""  # for Unknown events: the most common reason among its samples
 
     @property
     def duration(self) -> float:
@@ -115,6 +117,11 @@ def _run_confidence(label: str, samples: List[Sample]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
+def _dominant_reason(samples: List[Sample]) -> str:
+    reasons = Counter(s.reason for s in samples if s.label == UNKNOWN and s.reason)
+    return reasons.most_common(1)[0][0] if reasons else ""
+
+
 def _segment_chunk(chunk: List[Sample], cfg: SegmentConfig) -> List[Segment]:
     dt = cfg.sample_interval
     half = int(round(cfg.smoothing_seconds / dt / 2))
@@ -142,6 +149,7 @@ def _segment_chunk(chunk: List[Sample], cfg: SegmentConfig) -> List[Segment]:
             frame_end=part[-1].frame,
             confidence=_run_confidence(label, part),
             samples=part,
+            note=_dominant_reason(part) if label == UNKNOWN else "",
         ))
     # A lone fragment shorter than the minimum duration is tracking noise, not an event.
     if len(segments) == 1 and segments[0].duration < cfg.min_event_seconds:

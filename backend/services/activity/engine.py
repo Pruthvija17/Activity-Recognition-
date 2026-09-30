@@ -14,7 +14,7 @@ from .features import PoseFeatures, TrackFeatures
 from .sequence import feature_vector
 from .temporal import TemporalModel
 from .rules import UNKNOWN
-from .unknown import OpenSetClassifier, Prediction
+from .unknown import REASON_UNFAMILIAR, OpenSetClassifier, Prediction
 
 log = logging.getLogger("bas.engine")
 
@@ -66,5 +66,5 @@ class ActivityEngine:
         if novelty > 1.0 and pred.label != UNKNOWN:
             # Confident, but unlike every training example of that class: treat as unexpected.
             pred = Prediction(UNKNOWN, pred.confidence, pred.best_known, pred.entropy, probs,
-                              reason=f"unlike trained examples of {pred.best_known} (distance x{novelty:.1f})")
+                              reason=REASON_UNFAMILIAR)
         return f, pred, vec

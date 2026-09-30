@@ -1,6 +1,7 @@
 """Experiment detail and workflow configuration."""
-import datetime
 import json
+import logging
+import os
 import uuid
 from collections import OrderedDict
 from typing import List, Optional
@@ -15,6 +16,9 @@ from api.videos import video_info
 from database import get_db
 from services.activity.rules import ACTIVITIES, UNKNOWN
 from services.experiment_data import event_rows, workflow_result
+from config import utcnow
+
+log = logging.getLogger("bas.experiments")
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 
@@ -67,7 +71,7 @@ def set_workflow(experiment_id: str, body: WorkflowConfig, db: Session = Depends
         cfg = models.ExperimentConfig(id=str(uuid.uuid4()), experiment_id=experiment_id)
         db.add(cfg)
     cfg.expected_sequence = json.dumps(body.expected_sequence)
-    cfg.updated_at = datetime.datetime.utcnow()
+    cfg.updated_at = utcnow()
     db.commit()
     return workflow_result(db, experiment_id)
 
@@ -79,3 +83,27 @@ def reset_workflow(experiment_id: str, db: Session = Depends(get_db)):
     db.query(models.ExperimentConfig).filter(models.ExperimentConfig.experiment_id == experiment_id).delete()
     db.commit()
     return workflow_result(db, experiment_id)
+
+
+@router.delete("/{experiment_id}")
+def delete_experiment(experiment_id: str, db: Session = Depends(get_db)):
+    """Permanently delete an experiment: its events, people, workflow and video files."""
+    exp = _experiment(db, experiment_id)
+    if exp.status in ("queued", "processing", "live"):
+        raise HTTPException(status_code=409, detail=f"Cannot delete while the experiment is {exp.status}.")
+    files = [p for p in (exp.video_path, exp.preview_path) if p]
+    db.query(models.ActivityEvent).filter(models.ActivityEvent.experiment_id == experiment_id).delete()
+    db.query(models.Participant).filter(models.Participant.experiment_id == experiment_id).delete()
+    db.query(models.ExperimentConfig).filter(models.ExperimentConfig.experiment_id == experiment_id).delete()
+    db.delete(exp)
+    db.commit()
+    removed = 0
+    for path in files:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                removed += 1
+        except OSError as e:
+            log.warning("Could not remove %s: %s", path, e)
+    log.info("Deleted experiment %s (%d file(s) removed)", experiment_id, removed)
+    return {"deleted": experiment_id, "files_removed": removed}

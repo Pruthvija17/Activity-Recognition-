@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, FileJson, FileSpreadsheet, FileText, RotateCcw, VideoOff } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, FileJson, FileSpreadsheet, FileText, RotateCcw, Trash2, VideoOff } from 'lucide-react';
 import { api, toApiError } from '../lib/api';
 import { activityColor } from '../lib/activityColors';
 import { confidencePct, formatBytes, formatDuration, parseServerDate } from '../lib/format';
@@ -70,6 +70,23 @@ export default function ExperimentDetail() {
     setCurrentTime(seconds);
     setSelectedId(eventId ?? null);
   }, []);
+
+  const navigate = useNavigate();
+  const remove = async () => {
+    if (!exp) return;
+    const ok = window.confirm(
+      `Delete "${exp.filename}" permanently?
+
+Its video, activity events, review decisions and reports will be removed. This cannot be undone.`,
+    );
+    if (!ok) return;
+    try {
+      await api.deleteExperiment(id);
+      navigate('/experiments');
+    } catch (err) {
+      setActionError(toApiError(err).message);
+    }
+  };
 
   const reprocess = async () => {
     setActionError(null);
@@ -145,6 +162,14 @@ export default function ExperimentDetail() {
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-soft-blue bg-white text-brand-success text-xs font-bold hover:bg-ice-blue disabled:text-brand-muted disabled:cursor-not-allowed"
                   >
                     <RotateCcw className="w-3.5 h-3.5" /> {exp.status === 'uploaded' ? 'Process' : 'Re-process'}
+                  </button>
+                )}
+                {!active && (
+                  <button
+                    onClick={remove}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-red-200 bg-white text-brand-alert text-xs font-bold hover:bg-red-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete
                   </button>
                 )}
               </div>
@@ -275,6 +300,9 @@ export default function ExperimentDetail() {
                               {e.activity_type}
                               {e.original_activity && (
                                 <span className="text-xs text-brand-muted">(model: {e.original_activity})</span>
+                              )}
+                              {e.note && e.activity_type === 'Unknown' && (
+                                <span className="text-xs text-brand-muted">({e.note})</span>
                               )}
                             </span>
                           </td>

@@ -7,7 +7,7 @@ from typing import List
 
 from .features import PoseFeatures
 
-FEATURE_VERSION = 1
+FEATURE_VERSION = 2  # v2: upper-body-only flag
 
 # (attribute, scale) - scalar pose features; None values become 0 with a "present" flag.
 SCALARS = [
@@ -27,7 +27,7 @@ SCALARS = [
 ]
 MOTION_CLIP = 5.0  # torso lengths per second; anything faster is tracking noise
 
-FEATURE_DIM = 17 * 3 + len(SCALARS) * 2 + 1
+FEATURE_DIM = 17 * 3 + len(SCALARS) * 2 + 2
 
 
 def feature_vector(f: PoseFeatures) -> List[float]:
@@ -43,4 +43,5 @@ def feature_vector(f: PoseFeatures) -> List[float]:
                 v = min(float(v), MOTION_CLIP)
             out += [float(v) * scale, 1.0]
     out.append(1.0)  # pose visible
+    out.append(1.0 if f.upper_body_only else 0.0)
     return out
