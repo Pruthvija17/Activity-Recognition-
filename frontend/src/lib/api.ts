@@ -6,6 +6,8 @@ import type {
   DashboardSummary,
   ExperimentDetail,
   HardwareStatus,
+  LiveSessionInfo,
+  LiveSummary,
   ReportItem,
   ReviewActionName,
   ReviewEvent,
@@ -165,6 +167,10 @@ export const api = {
   resetWorkflow: (experimentId: string) =>
     request<WorkflowResult>(`/api/experiments/${encodeURIComponent(experimentId)}/workflow`, { method: 'DELETE' }),
 
-  // Live
-  liveSocketUrl: () => `${WS_URL}/ws/live`,
+  // Live camera monitoring
+  startLive: (fps: number, name?: string) =>
+    request<LiveSessionInfo>('/api/live/sessions', json('POST', { fps, name })),
+  stopLive: (experimentId: string) =>
+    request<LiveSummary>(`/api/live/sessions/${encodeURIComponent(experimentId)}/stop`, { method: 'POST' }),
+  liveSocketUrl: (wsPath: string) => `${WS_URL}${wsPath}`,
 };

@@ -3,14 +3,10 @@ BAS Activity Intelligence – FastAPI Backend
 Port: 8000
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
-import json
-import time
-import asyncio
 import datetime
 import logging
 
@@ -28,6 +24,7 @@ from api import analytics as analytics_api
 from api import review as review_api
 from api import experiments as experiments_api
 from api import reports as reports_api
+from api import live as live_api
 
 API_VERSION = "2.1.0"
 
@@ -59,11 +56,15 @@ def _recover_interrupted_jobs():
     db = SessionLocal()
     try:
         stuck = db.query(models.Experiment).filter(
-            models.Experiment.status.in_(["processing", "queued"])
+            models.Experiment.status.in_(["processing", "queued", "live"])
         ).all()
         for exp in stuck:
+            exp.message = (
+                "Live session was interrupted by a backend restart; its events were not saved."
+                if exp.status == "live" else
+                "Processing was interrupted by a backend restart. Process the video again."
+            )
             exp.status = "failed"
-            exp.message = "Processing was interrupted by a backend restart. Process the video again."
             log.warning("Experiment %s was interrupted by a restart; marked failed.", exp.id)
         db.commit()
     except Exception as e:
@@ -246,23 +247,6 @@ app.include_router(videos_api.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Activity Events
-# ─────────────────────────────────────────────────────────────────────────────
-
-@app.get("/events/", response_model=List[schemas.ActivityEvent])
-def read_events(
-    skip: int = 0,
-    limit: int = 500,
-    experiment_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    query = db.query(models.ActivityEvent)
-    if experiment_id:
-        query = query.filter(models.ActivityEvent.experiment_id == experiment_id)
-    return query.offset(skip).limit(limit).all()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Analytics, Dashboard & Review  (api/analytics.py, api/review.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -279,93 +263,7 @@ app.include_router(reports_api.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WebSocket – Live Monitor
+# Live camera monitoring  (api/live.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: str):
-        dead = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except Exception:
-                dead.append(connection)
-        for d in dead:
-            self.disconnect(d)
-
-
-manager = ConnectionManager()
-
-
-@app.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    Live monitor WebSocket.
-    Sends real system status: backend health, model status, last experiment info.
-    Does NOT send fake/simulated activity detections.
-    """
-    await manager.connect(websocket)
-    try:
-        while True:
-            db = SessionLocal()
-            try:
-                # Real status data
-                last_exp = (
-                    db.query(models.Experiment)
-                    .order_by(models.Experiment.start_time.desc())
-                    .first()
-                )
-                last_events = []
-                if last_exp:
-                    events = (
-                        db.query(models.ActivityEvent)
-                        .filter(models.ActivityEvent.experiment_id == last_exp.id)
-                        .order_by(models.ActivityEvent.start_time.desc())
-                        .limit(5)
-                        .all()
-                    )
-                    last_events = [
-                        {
-                            "person_id": e.person_id,
-                            "activity": e.activity_type,
-                            "confidence": e.confidence,
-                            "start_time": e.start_time,
-                            "end_time": e.end_time,
-                            "status": e.status,
-                        }
-                        for e in events
-                    ]
-
-                status_payload = {
-                    "type": "status",
-                    "timestamp": time.strftime("%H:%M:%S"),
-                    "backend_online": True,
-                    "model_ready": ai_pipeline.model_ready,
-                    "last_experiment_id": last_exp.id if last_exp else None,
-                    "last_experiment_name": last_exp.name if last_exp else None,
-                    "last_experiment_status": last_exp.status if last_exp else None,
-                    "recent_events": last_events,
-                    # No fake detections – real detections would come from a live camera feed
-                    "live_detections": [],
-                    "note": "Live detections require a real-time camera feed integration.",
-                }
-            finally:
-                db.close()
-
-            await websocket.send_text(json.dumps(status_payload))
-            await asyncio.sleep(2.0)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception:
-        manager.disconnect(websocket)
+app.include_router(live_api.router)

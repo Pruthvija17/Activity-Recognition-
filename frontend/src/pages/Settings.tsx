@@ -1,17 +1,63 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Sliders, Camera, Cpu, CheckCircle2, AlertCircle, Loader2, RefreshCw, Server } from 'lucide-react';
 import { api, toApiError } from '../lib/api';
 import { API_URL } from '../lib/config';
 import { parseServerDate } from '../lib/format';
+import { cameraSupported } from '../hooks/useCamera';
 import { useApiData } from '../hooks/useApiData';
 import { useSystemStatus } from '../hooks/useSystemStatus';
 import type { SystemSettings } from '../types/api';
 
-const CAMERA_SOURCES = [
-  'Camera 01 (Overhead Station)',
-  'Camera 02 (Workbench Side Feed)',
-  'RTSP Network Stream (rtsp://192.168.1.100/live)',
-];
+/** Real browser camera status: support, permission state and detected devices. */
+function CameraStatus() {
+  const [permission, setPermission] = useState<string>('checking…');
+  const [cameras, setCameras] = useState<number | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    navigator.permissions
+      ?.query({ name: 'camera' as PermissionName })
+      .then((p) => {
+        if (!alive) return;
+        setPermission(p.state);
+        p.onchange = () => setPermission(p.state);
+      })
+      .catch(() => alive && setPermission('unknown (browser does not report it)'));
+    navigator.mediaDevices
+      ?.enumerateDevices?.()
+      .then((all) => alive && setCameras(all.filter((d) => d.kind === 'videoinput').length))
+      .catch(() => alive && setCameras(0));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const supported = cameraSupported();
+  const permissionText: Record<string, string> = { granted: 'Allowed', denied: 'Blocked', prompt: 'Will ask when used' };
+  return (
+    <div className="space-y-1.5 text-sm">
+      <div className="flex justify-between">
+        <span className="text-brand-secondary">Browser camera support</span>
+        <span className={`font-bold ${supported ? 'text-brand-success' : 'text-brand-alert'}`}>{supported ? 'Supported' : 'Not available'}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-brand-secondary">Camera permission</span>
+        <span className={`font-bold ${permission === 'denied' ? 'text-brand-alert' : 'text-brand-primary'}`}>
+          {permissionText[permission] ?? permission}
+        </span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-brand-secondary">Cameras detected</span>
+        <span className="font-bold text-brand-primary">{cameras ?? '…'}</span>
+      </div>
+      <p className="text-xs text-brand-muted pt-1">
+        Choose the camera and analysis rate on the <Link to="/live" className="text-sky-blue underline">Live Monitor</Link> page.
+        {permission === 'denied' && ' Camera access is blocked: allow it in the site settings of this browser.'}
+      </p>
+    </div>
+  );
+}
 
 export default function Settings() {
   const { connection, status } = useSystemStatus();
@@ -19,7 +65,6 @@ export default function Settings() {
   // ── Local form state (mirrors backend) ──────────────────────────────────
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(60);
   const [unknownSensitivity, setUnknownSensitivity] = useState<string>('Medium');
-  const [cameraSource, setCameraSource] = useState<string>(CAMERA_SOURCES[0]);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
   // ── Async state ──────────────────────────────────────────────────────────
@@ -37,7 +82,6 @@ export default function Settings() {
     setSyncedFrom(settings.data);
     setConfidenceThreshold(settings.data.confidence_threshold);
     setUnknownSensitivity(settings.data.unknown_sensitivity);
-    setCameraSource(settings.data.camera_source);
     setSavedAt(settings.data.updated_at);
   }
 
@@ -49,7 +93,7 @@ export default function Settings() {
       const data = await api.updateSettings({
         confidence_threshold: confidenceThreshold,
         unknown_sensitivity: unknownSensitivity,
-        camera_source: cameraSource,
+        camera_source: settings.data?.camera_source ?? '',
       });
       setSavedAt(data.updated_at);
       setSaveResult({
@@ -193,24 +237,10 @@ export default function Settings() {
         <div className="bg-white p-6 rounded-2xl border border-soft-blue shadow-sm space-y-6">
           <div className="flex items-center gap-3 border-b border-soft-blue pb-4">
             <Camera className="w-5 h-5 text-sky-blue" />
-            <h3 className="text-lg font-bold text-deep-blue">Camera Stream Input</h3>
+            <h3 className="text-lg font-bold text-deep-blue">Camera &amp; Hardware</h3>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-brand-primary mb-2">
-              Active Camera Hardware
-            </label>
-            <select
-              value={cameraSource}
-              onChange={(e) => setCameraSource(e.target.value)}
-              disabled={loadingSettings}
-              className="w-full bg-ice-blue border border-soft-blue rounded-lg px-4 py-2.5 text-sm font-medium text-deep-blue focus:outline-none focus:ring-2 focus:ring-sky-blue disabled:opacity-50"
-            >
-              {Array.from(new Set([cameraSource, ...CAMERA_SOURCES])).map((src) => (
-                <option key={src}>{src}</option>
-              ))}
-            </select>
-          </div>
+          <CameraStatus />
 
           {/* Hardware Acceleration Status */}
           <div className="p-4 bg-ice-blue/60 rounded-xl border border-soft-blue space-y-3">

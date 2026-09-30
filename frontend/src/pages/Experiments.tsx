@@ -38,6 +38,7 @@ function stepIndex(uploading: boolean, video: VideoInfo | null): number {
     case 'queued':
       return 1;
     case 'processing':
+    case 'live':
       return 2;
     case 'completed':
       return 3;

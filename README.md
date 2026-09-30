@@ -55,6 +55,10 @@ Fixed camera, whole body in view, good light. Hold each activity for 5–10 s. R
 
 Experiments → drop or select a video → **Upload & Process**. Upload progress, queue position and processing progress are shown live; jobs run one at a time in the background and survive page reloads. A backend restart marks unfinished jobs as failed (use **Retry**).
 
+## Live monitoring (webcam)
+
+Live Monitor → **Start camera** (allow camera access when the browser asks) → choose the analysis rate → **Start AI monitoring**. Boxes and labels are drawn on the live video; **Stop AI monitoring** saves the session as an experiment (with its recording), so it appears in Review Queue, Analytics and Reports like an uploaded video. On a CPU-only machine expect roughly 2–4 analysed frames per second; the page shows the achieved rate and latency.
+
 ## Backend configuration (environment variables)
 
 | Variable | Default |

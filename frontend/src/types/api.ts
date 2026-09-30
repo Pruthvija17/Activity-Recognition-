@@ -44,7 +44,7 @@ export interface Experiment {
   video_path: string | null;
 }
 
-export type VideoStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
+export type VideoStatus = 'uploaded' | 'queued' | 'processing' | 'live' | 'completed' | 'failed';
 
 /** Upload + processing state of one experiment video (GET /api/videos/{id}/status). */
 export interface VideoInfo {
@@ -223,24 +223,37 @@ export interface HardwareStatus {
   torch_available: boolean;
 }
 
-export interface LiveRecentEvent {
-  person_id: string;
+export interface LivePerson {
+  person: string;
+  track_id: number;
+  box: [number, number, number, number]; // normalised x1, y1, x2, y2
   activity: string;
   confidence: number;
-  start_time: string;
-  end_time: string;
-  status: string;
+  unknown: boolean;
 }
 
-export interface LiveStatusPayload {
-  type: string;
-  timestamp: string;
-  backend_online: boolean;
-  model_ready: boolean;
-  last_experiment_id: string | null;
-  last_experiment_name: string | null;
-  last_experiment_status: string | null;
-  recent_events: LiveRecentEvent[];
-  live_detections: unknown[];
-  note: string;
+export interface LiveResult {
+  type: 'result';
+  frame: number;
+  t: number;
+  inference_ms: number;
+  avg_inference_ms: number;
+  people: LivePerson[];
+}
+
+export interface LiveSummary {
+  type: 'summary';
+  experiment_id: string;
+  events: number;
+  people: number;
+  duration_seconds: number;
+  frames: number;
+  dropped_short_tracks: number;
+  message: string;
+}
+
+export interface LiveSessionInfo {
+  experiment_id: string;
+  fps: number;
+  ws_path: string;
 }

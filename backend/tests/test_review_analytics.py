@@ -1,3 +1,4 @@
+import datetime
 import uuid
 
 import pytest
@@ -21,7 +22,8 @@ def experiment(client):
     exp_id = f"VID_t{uuid.uuid4().hex[:6]}"
     db = SessionLocal()
     try:
-        db.add(models.Experiment(id=exp_id, name="lab.mp4", video_filename="lab.mp4", status="completed"))
+        db.add(models.Experiment(id=exp_id, name="lab.mp4", video_filename="lab.mp4", status="completed",
+                                 processed_at=datetime.datetime.utcnow()))
         db.flush()
         save_events(db, exp_id, [
             _evt("Person 01", "Walking", 0, 3, 0.90),
@@ -127,6 +129,7 @@ def test_dashboard_summary(client, experiment):
 
 
 def test_old_unsafe_event_endpoints_are_gone(client):
-    assert client.post("/events/", json={}).status_code == 405
+    assert client.post("/events/", json={}).status_code in (404, 405)
+    assert client.get("/events/").status_code in (404, 405)
     assert client.put("/events/x", json={"activity_type": "Walking"}).status_code in (404, 405)
     assert client.post("/experiments/", json={"id": "x", "name": "y"}).status_code in (404, 405)

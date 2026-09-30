@@ -97,8 +97,12 @@ class EngineConfig:
         )
 
 
-def build_events(tracks: Dict[int, List[Sample]], cfg: EngineConfig, sample_interval: float) -> tuple:
-    """Filter short tracks, number people in order of appearance and segment each track."""
+def build_events(tracks: Dict[int, List[Sample]], cfg: EngineConfig, sample_interval: float,
+                 labels: Optional[Dict[int, str]] = None) -> tuple:
+    """Filter short tracks, number people in order of appearance and segment each track.
+
+    `labels` (track id -> "Person NN") keeps names already shown to an operator, e.g. live.
+    """
     kept = {
         tid: s for tid, s in tracks.items()
         if s and (s[-1].t - s[0].t + sample_interval) >= cfg.min_track_seconds
@@ -107,7 +111,7 @@ def build_events(tracks: Dict[int, List[Sample]], cfg: EngineConfig, sample_inte
     seg_cfg = cfg.segment_config(sample_interval)
     events = []
     for number, tid in enumerate(order, start=1):
-        person = f"Person {number:02d}"
+        person = (labels or {}).get(tid) or f"Person {number:02d}"
         for seg in segment_track(kept[tid], seg_cfg):
             events.append({
                 "person_id": person,
