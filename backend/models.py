@@ -24,6 +24,10 @@ class Experiment(Base):
     engine = Column(String, nullable=True)           # activity engine that produced the events
     processed_at = Column(DateTime, nullable=True)
     processing_seconds = Column(Float, nullable=True)
+    codec = Column(String, nullable=True)            # e.g. h264, hevc, mpeg4
+    # Browser playback: not_needed | pending | ready | failed | unavailable (no ffmpeg)
+    preview_status = Column(String, nullable=True)
+    preview_path = Column(String, nullable=True)
 
     events = relationship("ActivityEvent", back_populates="experiment")
     participants = relationship("Participant", back_populates="experiment")

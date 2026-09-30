@@ -45,6 +45,9 @@ def migrate_db():
             ("engine", "VARCHAR"),
             ("processed_at", "DATETIME"),
             ("processing_seconds", "FLOAT"),
+            ("codec", "VARCHAR"),
+            ("preview_status", "VARCHAR"),
+            ("preview_path", "VARCHAR"),
         ]:
             if col not in exp_cols:
                 cursor.execute(f"ALTER TABLE experiments ADD COLUMN {col} {sql_type}")

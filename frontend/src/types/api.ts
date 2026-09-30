@@ -64,6 +64,49 @@ export interface VideoInfo {
   processing_seconds: number | null;
   events_count: number | null;
   file_exists: boolean;
+  codec: string | null;
+  preview_status: 'not_needed' | 'pending' | 'ready' | 'failed' | 'unavailable' | null;
+  playable: boolean;
+}
+
+export interface WorkflowStep {
+  index: number;
+  activity: string;
+  status: 'done' | 'missing' | 'out_of_order';
+  time: number | null;
+  person: string | null;
+}
+
+export interface WorkflowDeviation {
+  type: 'missing' | 'out_of_order' | 'unexpected' | 'unknown';
+  step_index: number | null;
+  activity: string;
+  time: number | null;
+  person: string | null;
+  detail: string;
+}
+
+export interface WorkflowResult {
+  expected_sequence: string[];
+  observed_sequence: string[];
+  steps: WorkflowStep[];
+  deviations: WorkflowDeviation[];
+  notes: { type: string; activity: string; time: number; person: string }[];
+  deviation_count: number;
+  completed_steps: number;
+  completion: number;
+  next_expected_step: string | null;
+  is_compliant: boolean;
+  message: string;
+  configured: boolean;
+  scope: string;
+}
+
+export interface ExperimentDetail {
+  experiment: VideoInfo;
+  people: { person_id: string; label: string; events: number; first_seen: number | null }[];
+  events: ReviewEvent[];
+  workflow: WorkflowResult;
 }
 
 export interface ActivityStat {
@@ -148,21 +191,18 @@ export interface DashboardSummary {
 }
 
 export interface ReportItem {
-  id: string;
+  report_id: string;
   experiment_id: string;
-  experiment: string;
-  date: string;
-  events_count: number;
-  confirmed_count: number;
-  unknown_count: number;
-  deviations: number;
-  avg_confidence_pct: number;
-  status: string;
-}
-
-export interface CsvReport {
-  experiment_id: string;
-  rows: string[][];
+  video: string;
+  processed_at: string | null;
+  duration_seconds: number | null;
+  events: number;
+  people: number;
+  unknown_events: number;
+  pending_review: number;
+  avg_confidence: number | null;
+  workflow_deviations: number;
+  workflow_compliant: boolean;
 }
 
 export interface SystemSettings {

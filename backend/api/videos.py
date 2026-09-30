@@ -16,6 +16,7 @@ import models
 from database import get_db
 from runtime import ai_pipeline, jobs
 from services.jobs import ACTIVE_STATES
+from services import media
 
 try:
     import cv2
@@ -88,6 +89,9 @@ def video_info(exp: models.Experiment, events_count: Optional[int] = None) -> di
         "processing_seconds": exp.processing_seconds,
         "events_count": events_count,
         "file_exists": bool(exp.video_path and os.path.exists(exp.video_path)),
+        "codec": exp.codec,
+        "preview_status": exp.preview_status,
+        "playable": exp.preview_status in (None, "not_needed", "ready"),
     }
 
 
@@ -147,6 +151,12 @@ async def upload_video(file: UploadFile = File(...), db: Session = Depends(get_d
             detail="The file could not be read as a video (corrupt or unsupported encoding).",
         )
 
+    codec = media.probe_codec(save_path)
+    if media.browser_playable(save_path, codec):
+        preview_status = "not_needed"
+    else:
+        preview_status = "pending" if media.ffmpeg_available() else "unavailable"
+
     exp = models.Experiment(
         id=video_id,
         name=file.filename,
@@ -156,6 +166,8 @@ async def upload_video(file: UploadFile = File(...), db: Session = Depends(get_d
         status="uploaded",
         file_size=file_size,
         progress=0.0,
+        codec=codec,
+        preview_status=preview_status,
         **meta,
     )
     db.add(exp)
@@ -207,6 +219,9 @@ def list_videos(db: Session = Depends(get_db)):
 def serve_video(video_id: str, db: Session = Depends(get_db)):
     """Stream the uploaded video file (supports range requests for seeking)."""
     exp = _get_experiment(db, video_id)
+    # Prefer the browser-playable H.264 preview when one was made.
+    if exp.preview_status == "ready" and exp.preview_path and os.path.exists(exp.preview_path):
+        return FileResponse(path=exp.preview_path, media_type="video/mp4")
     if not exp.video_path or not os.path.exists(exp.video_path):
         raise HTTPException(status_code=404, detail=f"Video file for '{video_id}' is missing on the server.")
     ext = os.path.splitext(exp.video_path)[1].lower()

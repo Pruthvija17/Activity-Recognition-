@@ -15,6 +15,7 @@ from typing import Optional
 
 import models
 from database import SessionLocal
+from services import media
 
 log = logging.getLogger("bas.jobs")
 
@@ -116,6 +117,22 @@ class JobManager:
         finally:
             db.close()
 
+    @staticmethod
+    def _make_preview(db, exp: models.Experiment) -> None:
+        """Best effort: a failed preview never fails the analysis, it only affects playback."""
+        exp.progress, exp.message = 95.0, "Creating a browser-playable preview..."
+        db.commit()
+        dst = media.preview_path_for(exp.video_path)
+        try:
+            t0 = time.monotonic()
+            media.make_preview(exp.video_path, dst)
+            exp.preview_status, exp.preview_path = "ready", dst
+            log.info("Preview ready for %s (%s -> h264) in %.1fs", exp.id, exp.codec, time.monotonic() - t0)
+        except Exception as e:
+            exp.preview_status = "failed"
+            log.error("Preview failed for %s: %s", exp.id, e)
+        db.commit()
+
     def _process(self, experiment_id: str) -> None:
         db = SessionLocal()
         try:
@@ -133,13 +150,16 @@ class JobManager:
             log.info("Processing started: %s (%s)", experiment_id, exp.video_filename)
 
             last_write = [0.0]
+            wants_preview = exp.preview_status in ("pending", "failed") and media.ffmpeg_available()
+            # Leave the last 10 % of the bar for the preview transcode when one is needed.
+            scale = 90.0 if wants_preview else 100.0
 
             def on_progress(fraction: float) -> None:
                 now = time.monotonic()
                 if now - last_write[0] < PROGRESS_WRITE_INTERVAL:
                     return
                 last_write[0] = now
-                exp.progress = round(fraction * 100, 1)
+                exp.progress = round(fraction * scale, 1)
                 db.commit()
 
             t0 = time.monotonic()
@@ -161,6 +181,9 @@ class JobManager:
 
             _clear_results(db, experiment_id)
             count = save_events(db, experiment_id, result.get("events", []), self.pipeline.confidence_threshold)
+            db.commit()
+            if wants_preview:
+                self._make_preview(db, exp)
             exp.status = "completed"
             exp.progress = 100.0
             exp.message = message

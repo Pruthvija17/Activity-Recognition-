@@ -3,8 +3,8 @@ import { MESSAGES } from './messages';
 import type {
   ActivityEvent,
   Analytics,
-  CsvReport,
   DashboardSummary,
+  ExperimentDetail,
   HardwareStatus,
   ReportItem,
   ReviewActionName,
@@ -13,6 +13,7 @@ import type {
   SystemSettingsUpdate,
   SystemStatus,
   VideoInfo,
+  WorkflowResult,
 } from '../types/api';
 
 /** `offline`: the backend could not be reached at all. `http`: it answered with an error. */
@@ -141,8 +142,26 @@ export const api = {
   getAnalytics: (experimentId?: string) =>
     request<Analytics>(experimentId ? `/api/analytics?experiment_id=${encodeURIComponent(experimentId)}` : '/api/analytics'),
   getReports: () => request<ReportItem[]>('/api/reports'),
-  getReportCsv: (experimentId: string) =>
-    request<CsvReport>(`/api/reports/${encodeURIComponent(experimentId)}/csv`),
+  reportUrl: (experimentId: string, format: 'json' | 'csv' | 'pdf') => {
+    const base = `${API_URL}/api/reports/${encodeURIComponent(experimentId)}`;
+    return format === 'json' ? `${base}?download=true` : `${base}/${format}`;
+  },
+
+  // Experiment detail & workflow
+  getExperiment: (experimentId: string) =>
+    request<ExperimentDetail>(`/api/experiments/${encodeURIComponent(experimentId)}`),
+  getWorkflow: (experimentId: string, personId?: string) =>
+    request<WorkflowResult>(
+      `/api/experiments/${encodeURIComponent(experimentId)}/workflow` +
+        (personId ? `?person_id=${encodeURIComponent(personId)}` : ''),
+    ),
+  setWorkflow: (experimentId: string, steps: string[]) =>
+    request<WorkflowResult>(
+      `/api/experiments/${encodeURIComponent(experimentId)}/workflow`,
+      json('PUT', { expected_sequence: steps }),
+    ),
+  resetWorkflow: (experimentId: string) =>
+    request<WorkflowResult>(`/api/experiments/${encodeURIComponent(experimentId)}/workflow`, { method: 'DELETE' }),
 
   // Live
   liveSocketUrl: () => `${WS_URL}/ws/live`,

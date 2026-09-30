@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
-import uuid
 import time
 import asyncio
 import datetime
@@ -23,9 +22,12 @@ import models
 import schemas
 from database import engine, get_db, SessionLocal, check_db
 from runtime import ai_pipeline, jobs
+from services import media
 from api import videos as videos_api
 from api import analytics as analytics_api
 from api import review as review_api
+from api import experiments as experiments_api
+from api import reports as reports_api
 
 API_VERSION = "2.1.0"
 
@@ -141,6 +143,7 @@ def system_status():
         "model_ready": model["model_ready"],
         "model_error": model["load_error"],
         "missing_packages": sorted(model["import_errors"].keys()),
+        "ffmpeg": media.ffmpeg_available(),
         "cuda": hw.cuda_available,
         "device": hw.cuda_device_name or "CPU",
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
@@ -242,32 +245,6 @@ app.include_router(videos_api.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Experiments
-# ─────────────────────────────────────────────────────────────────────────────
-
-@app.get("/experiments/", response_model=List[schemas.Experiment])
-def read_experiments(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return db.query(models.Experiment).offset(skip).limit(limit).all()
-
-
-@app.get("/experiments/{experiment_id}", response_model=schemas.Experiment)
-def read_experiment(experiment_id: str, db: Session = Depends(get_db)):
-    db_experiment = db.query(models.Experiment).filter(models.Experiment.id == experiment_id).first()
-    if db_experiment is None:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-    return db_experiment
-
-
-@app.get("/experiments/{experiment_id}/events", response_model=List[schemas.ActivityEvent])
-def get_experiment_events(experiment_id: str, db: Session = Depends(get_db)):
-    """Get all activity events for a specific experiment."""
-    events = db.query(models.ActivityEvent).filter(
-        models.ActivityEvent.experiment_id == experiment_id
-    ).all()
-    return events
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Activity Events
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -285,144 +262,6 @@ def read_events(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sequence Validation
-# ─────────────────────────────────────────────────────────────────────────────
-
-DEFAULT_SEQUENCE = [
-    "Standing",
-    "Walking",
-    "Reaching",
-    "Picking up an object",
-    "Handling experimental equipment",
-    "Placing an object",
-    "Standing",
-]
-
-
-@app.get("/api/experiments/{experiment_id}/sequence", response_model=schemas.SequenceValidationResult)
-def get_sequence_validation(experiment_id: str, db: Session = Depends(get_db)):
-    """Validate the observed activity sequence against the expected sequence."""
-    exp = db.query(models.Experiment).filter(models.Experiment.id == experiment_id).first()
-    if not exp:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-
-    # Load expected sequence
-    config = db.query(models.ExperimentConfig).filter(
-        models.ExperimentConfig.experiment_id == experiment_id
-    ).first()
-    expected = DEFAULT_SEQUENCE
-    if config and config.expected_sequence:
-        try:
-            expected = json.loads(config.expected_sequence)
-        except Exception:
-            pass
-
-    # Load observed events ordered by start_seconds then start_time
-    events = (
-        db.query(models.ActivityEvent)
-        .filter(models.ActivityEvent.experiment_id == experiment_id)
-        .filter(models.ActivityEvent.status != "Review")
-        .order_by(models.ActivityEvent.start_time)
-        .all()
-    )
-    observed = [e.activity_type for e in events]
-
-    deviations = []
-    observed_ptr = 0
-
-    for step_idx, expected_step in enumerate(expected):
-        # Find the expected step in remaining observed
-        found_at = None
-        for i in range(observed_ptr, len(observed)):
-            if observed[i].lower() == expected_step.lower():
-                found_at = i
-                break
-
-        if found_at is None:
-            deviations.append(schemas.SequenceDeviationDetail(
-                step_index=step_idx,
-                expected=expected_step,
-                observed=None,
-                deviation_type="skipped",
-            ))
-        elif found_at > observed_ptr:
-            # Some observed steps were between – mark as out_of_order
-            deviations.append(schemas.SequenceDeviationDetail(
-                step_index=step_idx,
-                expected=expected_step,
-                observed=observed[found_at],
-                deviation_type="out_of_order",
-            ))
-            observed_ptr = found_at + 1
-        else:
-            observed_ptr = found_at + 1
-
-    # Determine next expected step
-    completed_steps = set()
-    obs_ptr2 = 0
-    for step in expected:
-        for i in range(obs_ptr2, len(observed)):
-            if observed[i].lower() == step.lower():
-                completed_steps.add(step)
-                obs_ptr2 = i + 1
-                break
-
-    next_step = None
-    for step in expected:
-        if step not in completed_steps:
-            next_step = step
-            break
-
-    is_compliant = len(deviations) == 0
-    message = (
-        "Sequence Deviation Detected – Operator Review Required."
-        if not is_compliant
-        else "Experiment sequence is compliant."
-    )
-
-    return schemas.SequenceValidationResult(
-        experiment_id=experiment_id,
-        is_compliant=is_compliant,
-        deviation_count=len(deviations),
-        deviations=deviations,
-        observed_sequence=observed,
-        expected_sequence=expected,
-        next_expected_step=next_step,
-        message=message,
-    )
-
-
-@app.post("/api/experiments/{experiment_id}/sequence")
-def set_sequence_config(
-    experiment_id: str,
-    body: schemas.SequenceConfigRequest,
-    db: Session = Depends(get_db),
-):
-    """Set or update the expected activity sequence for an experiment."""
-    exp = db.query(models.Experiment).filter(models.Experiment.id == experiment_id).first()
-    if not exp:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-
-    config = db.query(models.ExperimentConfig).filter(
-        models.ExperimentConfig.experiment_id == experiment_id
-    ).first()
-
-    if config:
-        config.expected_sequence = json.dumps(body.expected_sequence)
-        config.updated_at = datetime.datetime.utcnow()
-    else:
-        config = models.ExperimentConfig(
-            id=str(uuid.uuid4()),
-            experiment_id=experiment_id,
-            expected_sequence=json.dumps(body.expected_sequence),
-        )
-        db.add(config)
-
-    db.commit()
-    return {"status": "ok", "expected_sequence": body.expected_sequence}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Analytics, Dashboard & Review  (api/analytics.py, api/review.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -431,85 +270,11 @@ app.include_router(review_api.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Reports
+# Experiments & Reports  (api/experiments.py, api/reports.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.get("/api/reports")
-def get_reports(db: Session = Depends(get_db)):
-    """Return report data for all experiments using real DB data."""
-    experiments = db.query(models.Experiment).all()
-    reports = []
-    for exp in experiments:
-        events = db.query(models.ActivityEvent).filter(
-            models.ActivityEvent.experiment_id == exp.id
-        ).all()
-        if not events:
-            continue
-
-        total = len(events)
-        confirmed = sum(1 for e in events if e.status == "Confirmed")
-        unknown = sum(1 for e in events if e.activity_type == "Unknown" or e.status == "Review")
-        confidences = [e.confidence for e in events if e.confidence is not None]
-        avg_conf = round(sum(confidences) / len(confidences) * 100, 1) if confidences else 0.0
-
-        # Sequence deviation count
-        config = db.query(models.ExperimentConfig).filter(
-            models.ExperimentConfig.experiment_id == exp.id
-        ).first()
-        expected = DEFAULT_SEQUENCE
-        if config and config.expected_sequence:
-            try:
-                expected = json.loads(config.expected_sequence)
-            except Exception:
-                pass
-
-        observed = [e.activity_type for e in events if e.status != "Review"]
-        observed_lower = [o.lower() for o in observed]
-        deviations = sum(
-            1 for step in expected if step.lower() not in observed_lower
-        )
-
-        reports.append({
-            "id": f"REP-{exp.id}",
-            "experiment_id": exp.id,
-            "experiment": exp.name,
-            "date": exp.start_time.strftime("%Y-%m-%d") if exp.start_time else "",
-            "events_count": total,
-            "confirmed_count": confirmed,
-            "unknown_count": unknown,
-            "deviations": deviations,
-            "avg_confidence_pct": avg_conf,
-            "status": exp.status,
-        })
-    return reports
-
-
-@app.get("/api/reports/{experiment_id}/csv")
-def get_report_csv(experiment_id: str, db: Session = Depends(get_db)):
-    """Return CSV-compatible event data for an experiment."""
-    exp = db.query(models.Experiment).filter(models.Experiment.id == experiment_id).first()
-    if not exp:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-
-    events = db.query(models.ActivityEvent).filter(
-        models.ActivityEvent.experiment_id == experiment_id
-    ).all()
-
-    rows = [["Report_ID", "Experiment", "Person_ID", "Activity", "Start_Time", "End_Time", "Duration", "Confidence", "Status"]]
-    for e in events:
-        rows.append([
-            f"REP-{experiment_id}",
-            exp.name,
-            e.person_id,
-            e.activity_type,
-            e.start_time,
-            e.end_time,
-            str(round(e.duration, 2)),
-            f"{round(e.confidence * 100, 1)}%",
-            e.status,
-        ])
-
-    return {"experiment_id": experiment_id, "rows": rows}
+app.include_router(experiments_api.router)
+app.include_router(reports_api.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
