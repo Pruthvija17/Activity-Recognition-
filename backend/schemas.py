@@ -16,6 +16,9 @@ class ActivityEventBase(BaseModel):
     start_seconds: Optional[float] = None
     end_seconds: Optional[float] = None
     frame_number: Optional[int] = None
+    review_status: Optional[str] = None
+    original_activity: Optional[str] = None
+    reviewed_at: Optional[datetime.datetime] = None
 
 
 class ActivityEventCreate(ActivityEventBase):

@@ -109,13 +109,15 @@ frontend/src/
 - **Real-image check** (videos built from ultralytics' `bus.jpg` / `zidane.jpg`): 4 and 2 people detected and tracked with stable IDs; visible people → Standing 0.87–0.99; people cut off by the frame edge → Unknown (pose not visible) → Review. Found and fixed: keypoint jitter was being counted as hand activity (panning video → false "Handling").
 - **Still open:** accuracy on real BAS-style footage (sitting, reaching, pick/place, handling) is unverified until the user's clips arrive; thresholds will be tuned on them.
 
-### M5 — Data model, review, dashboard, analytics (P1/P2)
+### M5 — Data model, review, dashboard, analytics (P1/P2) — ✅ done
 - Migrations: experiments get `source` (upload|camera), `progress`, `error_message`, `processed_at`, `duration_seconds`, `fps`, `people_count`, `engine`; events get `review_status` (pending|confirmed|rejected|reclassified|auto), `original_activity`, `reviewed_at`.
 - Review: `GET /api/review/events?experiment_id=` (unknown + below-threshold, pending); `POST /api/review/events/{id}` with `confirm | reject | reclassify(activity)`. Original prediction preserved for future training data.
 - Review UI: clip player seeks to event (existing code, fixed), Confirm / Reject / Reclassify, keyboard-friendly.
 - `GET /api/dashboard/summary`: experiments (total/active/completed), people detected (sum of distinct tracks per experiment — not global participant-row count), unknown pending, avg confidence, recent events, current job progress.
 - Analytics: `GET /api/analytics/summary|activity-distribution|person-statistics?experiment_id=` incl. durations per activity, counts, avg confidence, unknown count. Rejected events excluded. Frontend adds experiment filter, duration chart, confidence stats.
 - **Verify:** reclassify an event → Review count drops, Analytics distribution changes, survives backend restart.
+- **Result:** events gain `review_status` / `original_activity` / `reviewed_at` (migrated in place). `api/review.py` (`GET /api/review/events?status=pending|reviewed|all&experiment_id=`, `POST /api/review/events/{id}` confirm / reject / reclassify, `GET /api/review/summary`), `api/analytics.py` + `services/analytics.py` (`GET /api/analytics?experiment_id=` with per-activity time/count/confidence, per-person time by activity, confidence histogram; rejected events excluded; `GET /api/dashboard/summary`). Removed `POST /events/`, `PUT /events/{id}` and `POST /experiments/`, which allowed inserting hand-made "AI" events. Review UI: filter + Pending/Reviewed tabs, Confirm/Reject/Reclassify with keyboard shortcuts, auto-advance, original prediction shown. Analytics: validated colour-blind-safe palette in fixed activity order (old palette failed the CVD check), horizontal bars + tables, stacked per-person time, histogram. Browser-verified with H.264 clips (reclassify by keyboard, reject, reviewed tab, figures consistent across Dashboard/Analytics). 45 backend tests.
+- **Fixed on the way:** CORS preflights didn't return allowed headers (credentials + `*`), which broke Range requests from the page; the video diagnostic now bypasses the HTTP cache.
 
 ### M6 — Experiments list/detail, workflow, reports (P2)
 - Experiments page: list of all experiments (status, source, duration, people, events) + upload panel; "New Experiment" button becomes the upload flow (dead button removed).

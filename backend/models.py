@@ -57,9 +57,13 @@ class ActivityEvent(Base):
     end_seconds = Column(Float, nullable=True)
     duration = Column(Float)
     confidence = Column(Float)
-    status = Column(String)          # "Confirmed" | "Review"
+    status = Column(String)          # display status: "Confirmed" | "Review" | "Rejected"
     zone = Column(String, nullable=True)
     frame_number = Column(Integer, nullable=True)  # Start frame for precise seeking
+    # Review workflow: auto (accepted by the engine) | pending | confirmed | rejected | reclassified
+    review_status = Column(String, default="auto", index=True)
+    original_activity = Column(String, nullable=True)  # model prediction before an operator reclassified it
+    reviewed_at = Column(DateTime, nullable=True)
 
     experiment = relationship("Experiment", back_populates="events")
     participant = relationship("Participant", back_populates="events")

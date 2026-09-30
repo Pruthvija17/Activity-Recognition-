@@ -4,9 +4,11 @@ import type {
   ActivityEvent,
   Analytics,
   CsvReport,
-  Experiment,
+  DashboardSummary,
   HardwareStatus,
   ReportItem,
+  ReviewActionName,
+  ReviewEvent,
   SystemSettings,
   SystemSettingsUpdate,
   SystemStatus,
@@ -120,16 +122,24 @@ export const api = {
   videoUrl: (videoId: string) => `${API_URL}/api/videos/${encodeURIComponent(videoId)}`,
 
   // Experiments & events
-  getExperiments: () => request<Experiment[]>('/experiments/'),
   getEvents: (experimentId?: string) =>
     request<ActivityEvent[]>(
       experimentId ? `/events/?experiment_id=${encodeURIComponent(experimentId)}` : '/events/',
     ),
-  reclassifyEvent: (eventId: string, activityType: string) =>
-    request<ActivityEvent>(`/events/${encodeURIComponent(eventId)}`, json('PUT', { activity_type: activityType })),
 
-  // Analytics & reports
-  getAnalytics: () => request<Analytics>('/api/analytics'),
+  // Review
+  getReviewEvents: (opts: { experimentId?: string; status?: 'pending' | 'reviewed' | 'all' } = {}) => {
+    const q = new URLSearchParams({ status: opts.status ?? 'pending' });
+    if (opts.experimentId) q.set('experiment_id', opts.experimentId);
+    return request<ReviewEvent[]>(`/api/review/events?${q}`);
+  },
+  reviewEvent: (eventId: string, action: ReviewActionName, activity?: string) =>
+    request<ReviewEvent>(`/api/review/events/${encodeURIComponent(eventId)}`, json('POST', { action, activity })),
+
+  // Dashboard, analytics & reports
+  getDashboard: () => request<DashboardSummary>('/api/dashboard/summary'),
+  getAnalytics: (experimentId?: string) =>
+    request<Analytics>(experimentId ? `/api/analytics?experiment_id=${encodeURIComponent(experimentId)}` : '/api/analytics'),
   getReports: () => request<ReportItem[]>('/api/reports'),
   getReportCsv: (experimentId: string) =>
     request<CsvReport>(`/api/reports/${encodeURIComponent(experimentId)}/csv`),

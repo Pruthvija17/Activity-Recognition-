@@ -150,3 +150,17 @@ def test_processing_refused_when_model_not_ready(client, sample_video, monkeypat
     assert r.status_code == 503
     assert "model is missing" in r.json()["detail"]
     assert client.get(f"/api/videos/{vid}/status").json()["status"] == "uploaded"
+
+
+def test_cors_preflight_allows_range_for_video_seeking(client):
+    r = client.options(
+        "/api/videos/anything",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "range",
+        },
+    )
+    assert r.status_code == 200
+    assert "range" in r.headers.get("access-control-allow-headers", "").lower()
+    assert r.headers["access-control-allow-origin"] == "http://localhost:5173"

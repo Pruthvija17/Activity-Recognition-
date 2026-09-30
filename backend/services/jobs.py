@@ -59,6 +59,7 @@ def save_events(db, experiment_id: str, events: list, confidence_threshold: floa
             duration=round(end_sec - start_sec, 2),
             confidence=confidence,
             status="Review" if needs_review else "Confirmed",
+            review_status="pending" if needs_review else "auto",
             frame_number=evt.get("frame_start"),
         ))
     return len(events)

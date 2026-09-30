@@ -73,6 +73,10 @@ export default function EventTable() {
                           <CheckCircle2 className="w-4 h-4" />
                           Confirmed
                         </span>
+                      ) : event.status === 'Rejected' ? (
+                        <span className="flex items-center gap-1.5 text-brand-muted text-xs font-medium line-through">
+                          Rejected
+                        </span>
                       ) : (
                         <span className="flex items-center gap-1.5 text-brand-warning text-xs font-medium">
                           <AlertTriangle className="w-4 h-4" />
@@ -81,7 +85,7 @@ export default function EventTable() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      {event.status === 'Review' || event.activity_type === 'Unknown' ? (
+                      {event.status === 'Review' ? (
                         <Link to="/review" className="text-sky-blue hover:text-deep-blue font-bold text-xs underline transition-colors">
                           Review Event
                         </Link>

@@ -3,7 +3,7 @@ BAS Activity Intelligence – FastAPI Backend
 Port: 8000
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Body, Request
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -24,6 +24,8 @@ import schemas
 from database import engine, get_db, SessionLocal, check_db
 from runtime import ai_pipeline, jobs
 from api import videos as videos_api
+from api import analytics as analytics_api
+from api import review as review_api
 
 API_VERSION = "2.1.0"
 
@@ -90,9 +92,12 @@ app = FastAPI(title="BAS Activity Intelligence API", version=API_VERSION, lifesp
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # No cookies/auth are used; listing headers explicitly makes preflights answer them
+    # (with credentials on, a "*" header wildcard is not echoed and Range requests fail).
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Range", "Accept"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
 
 
@@ -104,36 +109,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error. Check the backend logs for details."},
     )
-
-# Activity colours for analytics charts
-ACTIVITY_COLORS = {
-    "Standing": "#0F4C81",
-    "Sitting": "#16A34A",
-    "Walking": "#38BDF8",
-    "Reaching": "#F59E0B",
-    "Picking up an object": "#8B5CF6",
-    "Placing an object": "#EC4899",
-    "Handling experimental equipment": "#14B8A6",
-    "Unknown": "#EF4444",
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _hms_to_seconds(hms: str) -> float:
-    """Convert HH:MM:SS or MM:SS string to total seconds."""
-    try:
-        parts = hms.strip().split(":")
-        if len(parts) == 3:
-            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
-        if len(parts) == 2:
-            return int(parts[0]) * 60 + float(parts[1])
-        return float(parts[0])
-    except Exception:
-        return 0.0
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Core Endpoints
@@ -270,15 +245,6 @@ app.include_router(videos_api.router)
 # Experiments
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.post("/experiments/", response_model=schemas.Experiment)
-def create_experiment(experiment: schemas.ExperimentCreate, db: Session = Depends(get_db)):
-    db_experiment = models.Experiment(**experiment.model_dump())
-    db.add(db_experiment)
-    db.commit()
-    db.refresh(db_experiment)
-    return db_experiment
-
-
 @app.get("/experiments/", response_model=List[schemas.Experiment])
 def read_experiments(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return db.query(models.Experiment).offset(skip).limit(limit).all()
@@ -305,15 +271,6 @@ def get_experiment_events(experiment_id: str, db: Session = Depends(get_db)):
 # Activity Events
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.post("/events/", response_model=schemas.ActivityEvent)
-def create_event(event: schemas.ActivityEventCreate, db: Session = Depends(get_db)):
-    db_event = models.ActivityEvent(**event.model_dump())
-    db.add(db_event)
-    db.commit()
-    db.refresh(db_event)
-    return db_event
-
-
 @app.get("/events/", response_model=List[schemas.ActivityEvent])
 def read_events(
     skip: int = 0,
@@ -325,30 +282,6 @@ def read_events(
     if experiment_id:
         query = query.filter(models.ActivityEvent.experiment_id == experiment_id)
     return query.offset(skip).limit(limit).all()
-
-
-@app.put("/events/{event_id}", response_model=schemas.ActivityEvent)
-def update_event(
-    event_id: str,
-    activity_type: Optional[str] = None,
-    body: Optional[schemas.EventUpdateRequest] = Body(default=None),
-    db: Session = Depends(get_db),
-):
-    """Update event classification. Accepts query param or JSON body."""
-    db_event = db.query(models.ActivityEvent).filter(models.ActivityEvent.id == event_id).first()
-    if not db_event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    # Prefer body over query param
-    new_activity = (body.activity_type if body else None) or activity_type
-    if not new_activity:
-        raise HTTPException(status_code=400, detail="activity_type is required")
-
-    db_event.activity_type = new_activity
-    db_event.status = "Confirmed" if new_activity.lower() != "unknown" else "Review"
-    db.commit()
-    db.refresh(db_event)
-    return db_event
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -490,109 +423,11 @@ def set_sequence_config(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Analytics
+# Analytics, Dashboard & Review  (api/analytics.py, api/review.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _compute_analytics(events: list, experiment_id: Optional[str] = None) -> dict:
-    """Compute analytics stats from a list of ActivityEvent ORM objects."""
-    if not events:
-        return {
-            "experiment_id": experiment_id,
-            "total_events": 0,
-            "confirmed_events": 0,
-            "unknown_events": 0,
-            "sequence_deviations": 0,
-            "avg_confidence": 0.0,
-            "experiment_duration_seconds": 0.0,
-            "activity_distribution": [],
-            "person_stats": [],
-            "model_ready": ai_pipeline.model_ready,
-        }
-
-    total = len(events)
-    confirmed = sum(1 for e in events if e.status == "Confirmed")
-    unknown = sum(1 for e in events if e.activity_type == "Unknown" or e.status == "Review")
-    confidences = [e.confidence for e in events if e.confidence is not None]
-    avg_conf = round(sum(confidences) / len(confidences), 4) if confidences else 0.0
-
-    # Duration: max end_seconds – min start_seconds
-    start_times = [e.start_seconds for e in events if e.start_seconds is not None]
-    end_times = [e.end_seconds for e in events if e.end_seconds is not None]
-    if not start_times:
-        start_times = [_hms_to_seconds(e.start_time) for e in events]
-        end_times = [_hms_to_seconds(e.end_time) for e in events]
-    exp_duration = round((max(end_times) - min(start_times)), 2) if end_times and start_times else 0.0
-
-    # Activity distribution
-    activity_counts: dict = {}
-    for e in events:
-        act = e.activity_type
-        activity_counts[act] = activity_counts.get(act, 0) + 1
-
-    distribution = [
-        {
-            "name": act,
-            "value": count,
-            "color": ACTIVITY_COLORS.get(act, "#94A3B8"),
-        }
-        for act, count in sorted(activity_counts.items(), key=lambda x: -x[1])
-    ]
-
-    # Per-person stats
-    person_map: dict = {}
-    for e in events:
-        pid = e.person_id
-        if pid not in person_map:
-            person_map[pid] = {"activities": 0, "unknowns": 0, "confidences": []}
-        person_map[pid]["activities"] += 1
-        if e.activity_type == "Unknown":
-            person_map[pid]["unknowns"] += 1
-        if e.confidence is not None:
-            person_map[pid]["confidences"].append(e.confidence)
-
-    person_stats = [
-        {
-            "name": pid,
-            "activities": v["activities"],
-            "unknowns": v["unknowns"],
-            "avg_confidence": round(
-                sum(v["confidences"]) / len(v["confidences"]), 4
-            ) if v["confidences"] else 0.0,
-        }
-        for pid, v in person_map.items()
-    ]
-
-    return {
-        "experiment_id": experiment_id,
-        "total_events": total,
-        "confirmed_events": confirmed,
-        "unknown_events": unknown,
-        "sequence_deviations": 0,  # Populated separately via sequence endpoint
-        "avg_confidence": avg_conf,
-        "experiment_duration_seconds": exp_duration,
-        "activity_distribution": distribution,
-        "person_stats": person_stats,
-        "model_ready": ai_pipeline.model_ready,
-    }
-
-
-@app.get("/api/analytics")
-def get_analytics(db: Session = Depends(get_db)):
-    """Aggregate analytics across all experiments."""
-    events = db.query(models.ActivityEvent).all()
-    return _compute_analytics(events)
-
-
-@app.get("/api/analytics/{experiment_id}")
-def get_experiment_analytics(experiment_id: str, db: Session = Depends(get_db)):
-    """Per-experiment analytics."""
-    exp = db.query(models.Experiment).filter(models.Experiment.id == experiment_id).first()
-    if not exp:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-    events = db.query(models.ActivityEvent).filter(
-        models.ActivityEvent.experiment_id == experiment_id
-    ).all()
-    return _compute_analytics(events, experiment_id=experiment_id)
+app.include_router(analytics_api.router)
+app.include_router(review_api.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

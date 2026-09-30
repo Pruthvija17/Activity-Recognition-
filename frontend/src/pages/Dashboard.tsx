@@ -1,21 +1,16 @@
+import { useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import Card from '../components/Card';
+import ProgressBar from '../components/ProgressBar';
 import { DataState } from '../components/StatusNotice';
 import { useApiData } from '../hooks/useApiData';
 import { useSystemStatus } from '../hooks/useSystemStatus';
 import { api } from '../lib/api';
+import { activityColor } from '../lib/activityColors';
 import { confidencePct } from '../lib/format';
-import type { ActivityEvent, Experiment } from '../types/api';
 
-function summarise(experiments: Experiment[], events: ActivityEvent[]) {
-  const unknowns = events.filter((e) => e.activity_type === 'Unknown' || e.status === 'Review').length;
-  const people = new Set(events.map((e) => e.person_id)).size;
-  const avg =
-    events.length > 0
-      ? `${Math.round(events.reduce((sum, e) => sum + confidencePct(e.confidence), 0) / events.length)}%`
-      : '—';
-  const processed = experiments.filter((e) => e.status === 'processed' || e.status === 'completed').length;
-  return { unknowns, people, avg, processed };
-}
+const JOB_POLL_MS = 2000;
 
 function StatusRow({ label, ok, value }: { label: string; ok: boolean; value: string }) {
   return (
@@ -28,25 +23,94 @@ function StatusRow({ label, ok, value }: { label: string; ok: boolean; value: st
 
 export default function Dashboard() {
   const { online, status } = useSystemStatus();
-  const { data, error, loading, reload } = useApiData(async () => {
-    const [experiments, events] = await Promise.all([api.getExperiments(), api.getEvents()]);
-    return { experiments, events };
-  });
+  const { data, error, loading, reload } = useApiData(() => api.getDashboard());
+  const jobActive = !!data?.current_job;
 
-  const s = data ? summarise(data.experiments, data.events) : null;
+  // Keep the current-job card live while something is processing.
+  useEffect(() => {
+    if (!jobActive) return;
+    const id = setInterval(reload, JOB_POLL_MS);
+    return () => clearInterval(id);
+  }, [jobActive, reload]);
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-deep-blue">Dashboard</h1>
 
       <DataState loading={loading} error={error} isEmpty={!data} onRetry={reload}>
-        {data && s && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <Card title={`Experiments (${s.processed} processed)`} value={data.experiments.length} />
-            <Card title="People Detected" value={s.people} />
-            <Card title="Unknown / Review Events" value={s.unknowns} alert={s.unknowns > 0} />
-            <Card title="Avg Confidence" value={s.avg} />
-          </div>
+        {data && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <Card
+                title={`Experiments (${data.experiments.active} active, ${data.experiments.completed} completed)`}
+                value={data.experiments.total}
+              />
+              <Card title="People Detected" value={data.people_detected} />
+              <Card title="Pending Review" value={data.pending_review} alert={data.pending_review > 0} />
+              <Card
+                title="Avg Confidence"
+                value={data.avg_confidence == null ? '—' : `${confidencePct(data.avg_confidence)}%`}
+              />
+            </div>
+
+            {data.current_job && (
+              <div className="bg-white rounded-2xl p-6 border border-soft-blue shadow-sm space-y-3">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-bold text-deep-blue">Processing now</h3>
+                  <Link to="/experiments" className="text-sm font-bold text-sky-blue underline">Open Experiments</Link>
+                </div>
+                <ProgressBar
+                  value={data.current_job.progress}
+                  indeterminate={data.current_job.status === 'queued'}
+                  label={`${data.current_job.filename} — ${data.current_job.status}`}
+                />
+              </div>
+            )}
+
+            <div className="bg-white rounded-2xl border border-soft-blue shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-soft-blue flex justify-between items-center">
+                <h3 className="text-lg font-bold text-deep-blue">Recent Activity Events</h3>
+                {data.pending_review > 0 && (
+                  <Link to="/review" className="flex items-center gap-1 text-sm font-bold text-brand-warning">
+                    <AlertTriangle className="w-4 h-4" /> {data.pending_review} to review
+                  </Link>
+                )}
+              </div>
+              {data.recent_events.length === 0 ? (
+                <p className="p-6 text-center text-sm text-brand-secondary">
+                  No activity data available. Process an experiment first.
+                </p>
+              ) : (
+                <table className="w-full text-sm">
+                  <tbody className="divide-y divide-soft-blue">
+                    {data.recent_events.map((e) => (
+                      <tr key={e.id}>
+                        <td className="px-6 py-3 text-brand-secondary truncate max-w-48">{e.video}</td>
+                        <td className="px-6 py-3 font-medium text-brand-primary whitespace-nowrap">{e.person}</td>
+                        <td className="px-6 py-3">
+                          <span className="inline-flex items-center gap-2 text-brand-primary">
+                            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: activityColor(e.activity) }} />
+                            {e.activity}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 font-mono text-xs text-brand-secondary whitespace-nowrap">
+                          {e.start_time} – {e.end_time}
+                        </td>
+                        <td className="px-6 py-3 text-xs text-brand-secondary">{confidencePct(e.confidence)}%</td>
+                        <td className="px-6 py-3 text-xs">
+                          {e.review_status === 'pending' ? (
+                            <span className="text-brand-warning font-semibold">Needs review</span>
+                          ) : (
+                            <span className="text-brand-muted capitalize">{e.review_status === 'auto' ? 'accepted' : e.review_status}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
         )}
       </DataState>
 

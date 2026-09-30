@@ -63,6 +63,13 @@ def migrate_db():
             cursor.execute("ALTER TABLE activity_events ADD COLUMN end_seconds FLOAT")
         if "frame_number" not in evt_cols:
             cursor.execute("ALTER TABLE activity_events ADD COLUMN frame_number INTEGER")
+        if "review_status" not in evt_cols:
+            cursor.execute("ALTER TABLE activity_events ADD COLUMN review_status VARCHAR DEFAULT 'auto'")
+            cursor.execute("UPDATE activity_events SET review_status = CASE WHEN status = 'Review' THEN 'pending' ELSE 'auto' END")
+        if "original_activity" not in evt_cols:
+            cursor.execute("ALTER TABLE activity_events ADD COLUMN original_activity VARCHAR")
+        if "reviewed_at" not in evt_cols:
+            cursor.execute("ALTER TABLE activity_events ADD COLUMN reviewed_at DATETIME")
 
         cursor.execute("UPDATE activity_events SET video_id = experiment_id WHERE video_id IS NULL")
 

@@ -4,7 +4,8 @@
  */
 export async function diagnoseVideoError(url: string): Promise<string> {
   try {
-    const res = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+    // no-store: the <video> element may have cached this URL without CORS headers.
+    const res = await fetch(url, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' });
     if (res.status === 404) {
       return 'The video file is missing on the server (it may have been moved or deleted).';
     }

@@ -31,6 +31,8 @@ export interface ActivityEvent {
   status: string;
   zone: string | null;
   frame_number: number | null;
+  review_status?: ReviewStatus;
+  original_activity?: string | null;
 }
 
 export interface Experiment {
@@ -64,30 +66,85 @@ export interface VideoInfo {
   file_exists: boolean;
 }
 
-export interface ActivityCount {
+export interface ActivityStat {
   name: string;
-  value: number;
+  count: number;
+  seconds: number;
+  avg_confidence: number | null;
   color: string;
 }
 
 export interface PersonStat {
+  person_id: string;
   name: string;
-  activities: number;
+  experiment_id: string;
+  events: number;
   unknowns: number;
-  avg_confidence: number;
+  active_seconds: number;
+  avg_confidence: number | null;
+  top_activity: string | null;
+  seconds_by_activity: Record<string, number>;
 }
 
 export interface Analytics {
   experiment_id: string | null;
+  experiments_count: number;
+  people_count: number;
   total_events: number;
-  confirmed_events: number;
+  rejected_events: number;
+  pending_review: number;
+  reviewed_events: number;
   unknown_events: number;
-  sequence_deviations: number;
-  avg_confidence: number;
-  experiment_duration_seconds: number;
-  activity_distribution: ActivityCount[];
+  avg_confidence: number | null;
+  total_activity_seconds: number;
+  activity_distribution: ActivityStat[];
   person_stats: PersonStat[];
-  model_ready: boolean;
+  confidence_histogram: { bucket: string; count: number }[];
+  activity_engine: string;
+}
+
+export type ReviewStatus = 'auto' | 'pending' | 'confirmed' | 'rejected' | 'reclassified';
+export type ReviewActionName = 'confirm' | 'reject' | 'reclassify';
+
+export interface ReviewEvent {
+  id: string;
+  experiment_id: string;
+  video_id: string;
+  video: string | null;
+  person_id: string;
+  person: string;
+  activity_type: string;
+  original_activity: string | null;
+  start_time: string;
+  end_time: string;
+  start_seconds: number | null;
+  end_seconds: number | null;
+  duration: number;
+  confidence: number;
+  status: string;
+  review_status: ReviewStatus;
+  reviewed_at: string | null;
+}
+
+export interface DashboardSummary {
+  experiments: { total: number; active: number; completed: number; failed: number; uploaded: number };
+  people_detected: number;
+  total_events: number;
+  pending_review: number;
+  unknown_events: number;
+  avg_confidence: number | null;
+  current_job: { video_id: string; filename: string; status: string; progress: number } | null;
+  recent_events: {
+    id: string;
+    experiment_id: string;
+    video: string | null;
+    person: string;
+    activity: string;
+    start_time: string;
+    end_time: string;
+    confidence: number;
+    review_status: ReviewStatus;
+  }[];
 }
 
 export interface ReportItem {
