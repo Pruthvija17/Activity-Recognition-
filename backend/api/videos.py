@@ -151,11 +151,7 @@ async def upload_video(file: UploadFile = File(...), db: Session = Depends(get_d
             detail="The file could not be read as a video (corrupt or unsupported encoding).",
         )
 
-    codec = media.probe_codec(save_path)
-    if media.browser_playable(save_path, codec):
-        preview_status = "not_needed"
-    else:
-        preview_status = "pending" if media.ffmpeg_available() else "unavailable"
+    codec, preview_status = media.classify_playback(save_path)
 
     exp = models.Experiment(
         id=video_id,
@@ -219,10 +215,14 @@ def list_videos(db: Session = Depends(get_db)):
 def serve_video(video_id: str, db: Session = Depends(get_db)):
     """Stream the uploaded video file (supports range requests for seeking)."""
     exp = _get_experiment(db, video_id)
+    # The file behind this URL changes when a preview is created, so browsers must revalidate
+    # (ETag) instead of reusing a cached copy of the original.
+    headers = {"Cache-Control": "no-cache"}
     # Prefer the browser-playable H.264 preview when one was made.
     if exp.preview_status == "ready" and exp.preview_path and os.path.exists(exp.preview_path):
-        return FileResponse(path=exp.preview_path, media_type="video/mp4")
+        return FileResponse(path=exp.preview_path, media_type="video/mp4", headers=headers)
     if not exp.video_path or not os.path.exists(exp.video_path):
         raise HTTPException(status_code=404, detail=f"Video file for '{video_id}' is missing on the server.")
     ext = os.path.splitext(exp.video_path)[1].lower()
-    return FileResponse(path=exp.video_path, media_type=MEDIA_TYPES.get(ext, "application/octet-stream"))
+    return FileResponse(path=exp.video_path, media_type=MEDIA_TYPES.get(ext, "application/octet-stream"),
+                        headers=headers)

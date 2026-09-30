@@ -68,6 +68,14 @@ def browser_playable(path: str, codec: Optional[str]) -> bool:
     return ext in BROWSER_CONTAINERS and (codec or "") in BROWSER_CODECS
 
 
+def classify_playback(path: str) -> tuple:
+    """(codec, preview_status) for a stored video: not_needed | pending | unavailable."""
+    codec = probe_codec(path)
+    if browser_playable(path, codec):
+        return codec, "not_needed"
+    return codec, ("pending" if ffmpeg_available() else "unavailable")
+
+
 def preview_path_for(path: str) -> str:
     stem, _ = os.path.splitext(path)
     return f"{stem}.preview.mp4"

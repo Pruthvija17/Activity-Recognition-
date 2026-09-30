@@ -120,7 +120,9 @@ export const api = {
   getVideoStatus: (videoId: string) =>
     request<VideoInfo>(`/api/videos/${encodeURIComponent(videoId)}/status`),
   listVideos: () => request<VideoInfo[]>('/api/videos'),
-  videoUrl: (videoId: string) => `${API_URL}/api/videos/${encodeURIComponent(videoId)}`,
+  /** `version` (e.g. the preview status) changes the URL when the served file changes. */
+  videoUrl: (videoId: string, version?: string | null) =>
+    `${API_URL}/api/videos/${encodeURIComponent(videoId)}` + (version ? `?v=${encodeURIComponent(version)}` : ''),
 
   // Experiments & events
   getEvents: (experimentId?: string) =>

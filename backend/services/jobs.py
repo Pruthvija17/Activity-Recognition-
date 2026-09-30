@@ -69,7 +69,8 @@ def save_events(db, experiment_id: str, events: list, confidence_threshold: floa
 class JobManager:
     def __init__(self, pipeline):
         self.pipeline = pipeline
-        self._queue: "queue.Queue[Optional[str]]" = queue.Queue()
+        # Items are ("process" | "preview", experiment_id); None stops the worker.
+        self._queue: "queue.Queue[Optional[tuple]]" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self.current: Optional[str] = None
 
@@ -85,8 +86,29 @@ class JobManager:
         self._queue.put(None)
 
     def enqueue(self, experiment_id: str) -> None:
-        self._queue.put(experiment_id)
+        self._queue.put(("process", experiment_id))
         log.info("Queued %s (queue length %d)", experiment_id, self._queue.qsize())
+
+    def enqueue_preview(self, experiment_id: str) -> None:
+        """Create a browser-playable preview for an already-processed video."""
+        self._queue.put(("preview", experiment_id))
+
+    def backfill_playback(self) -> None:
+        """Videos stored before codec detection existed: detect the codec, and queue a preview
+        for completed ones the browser cannot play."""
+        db = SessionLocal()
+        try:
+            for exp in db.query(models.Experiment).filter(models.Experiment.codec.is_(None)).all():
+                if not exp.video_path or not os.path.exists(exp.video_path):
+                    continue
+                exp.codec, exp.preview_status = media.classify_playback(exp.video_path)
+                log.info("Detected codec for %s: %s (preview %s)", exp.id, exp.codec, exp.preview_status)
+            db.commit()
+            for exp in db.query(models.Experiment).filter(models.Experiment.status == "completed",
+                                                          models.Experiment.preview_status == "pending").all():
+                self.enqueue_preview(exp.id)
+        finally:
+            db.close()
 
     def queue_length(self) -> int:
         return self._queue.qsize()
@@ -94,15 +116,20 @@ class JobManager:
     # ── worker ───────────────────────────────────────────────────────────────
     def _run(self) -> None:
         while True:
-            experiment_id = self._queue.get()
-            if experiment_id is None:
+            item = self._queue.get()
+            if item is None:
                 return
+            kind, experiment_id = item
             self.current = experiment_id
             try:
-                self._process(experiment_id)
+                if kind == "preview":
+                    self._preview_only(experiment_id)
+                else:
+                    self._process(experiment_id)
             except Exception:
-                log.exception("Job %s crashed", experiment_id)
-                self._fail(experiment_id, "Video processing failed unexpectedly. Check backend logs.")
+                log.exception("Job %s (%s) crashed", experiment_id, kind)
+                if kind == "process":
+                    self._fail(experiment_id, "Video processing failed unexpectedly. Check backend logs.")
             finally:
                 self.current = None
 
@@ -117,11 +144,21 @@ class JobManager:
         finally:
             db.close()
 
+    def _preview_only(self, experiment_id: str) -> None:
+        db = SessionLocal()
+        try:
+            exp = db.get(models.Experiment, experiment_id)
+            if exp and exp.preview_status in ("pending", "failed") and exp.video_path and os.path.exists(exp.video_path):
+                self._make_preview(db, exp, show_progress=False)
+        finally:
+            db.close()
+
     @staticmethod
-    def _make_preview(db, exp: models.Experiment) -> None:
+    def _make_preview(db, exp: models.Experiment, show_progress: bool = True) -> None:
         """Best effort: a failed preview never fails the analysis, it only affects playback."""
-        exp.progress, exp.message = 95.0, "Creating a browser-playable preview..."
-        db.commit()
+        if show_progress:
+            exp.progress, exp.message = 95.0, "Creating a browser-playable preview..."
+            db.commit()
         dst = media.preview_path_for(exp.video_path)
         try:
             t0 = time.monotonic()
@@ -146,6 +183,8 @@ class JobManager:
                 return
 
             exp.status, exp.progress, exp.message = "processing", 0.0, None
+            if exp.codec is None:
+                exp.codec, exp.preview_status = media.classify_playback(exp.video_path)
             db.commit()
             log.info("Processing started: %s (%s)", experiment_id, exp.video_filename)
 

@@ -85,6 +85,7 @@ async def lifespan(_app: FastAPI):
     if ai_pipeline.load_error:
         log.error("AI pipeline not ready: %s", ai_pipeline.load_error)
     jobs.start()
+    jobs.backfill_playback()
     yield
     jobs.stop()
 

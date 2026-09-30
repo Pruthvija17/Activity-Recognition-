@@ -3,7 +3,16 @@ import { activityColor, UNKNOWN } from '../lib/activityColors';
 import { formatDuration } from '../lib/format';
 import type { ReviewEvent } from '../types/api';
 
-const TICKS = 6;
+const MAX_TICKS = 7;
+const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+
+/** Tick positions at a round interval so labels never repeat. */
+function ticks(span: number): number[] {
+  const step = STEPS.find((s) => span / s <= MAX_TICKS - 1) ?? Math.ceil(span / (MAX_TICKS - 1));
+  const out: number[] = [];
+  for (let t = 0; t <= span + 1e-6; t += step) out.push(t);
+  return out;
+}
 
 /**
  * Per-person activity timeline on the real video time axis. Clicking a segment selects and
@@ -83,9 +92,11 @@ export default function ExperimentTimeline({
 
       <div className="flex items-center gap-3">
         <div className="w-24" />
-        <div className="flex-1 flex justify-between text-[11px] text-brand-muted">
-          {Array.from({ length: TICKS }, (_, i) => (
-            <span key={i}>{formatDuration((span * i) / (TICKS - 1))}</span>
+        <div className="flex-1 relative h-4 text-[11px] text-brand-muted">
+          {ticks(span).map((t) => (
+            <span key={t} className="absolute -translate-x-1/2" style={{ left: pct(t) }}>
+              {formatDuration(t)}
+            </span>
           ))}
         </div>
       </div>

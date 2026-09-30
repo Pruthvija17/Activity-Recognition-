@@ -1,115 +1,92 @@
-import { useState } from 'react';
-import { Download, Printer, FileSpreadsheet, FileCheck } from 'lucide-react';
-import { api, toApiError } from '../lib/api';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, CheckCircle2, FileCheck, FileJson, FileSpreadsheet, FileText } from 'lucide-react';
+import { api } from '../lib/api';
+import { confidencePct, formatDuration, parseServerDate } from '../lib/format';
 import { useApiData } from '../hooks/useApiData';
-import { DataState, StatusNotice } from '../components/StatusNotice';
+import { DataState } from '../components/StatusNotice';
 
-const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+function Figure({ label, value, tone }: { label: string; value: React.ReactNode; tone?: 'alert' | 'ok' }) {
+  const color = tone === 'alert' ? 'text-brand-alert' : tone === 'ok' ? 'text-brand-success' : 'text-deep-blue';
+  return (
+    <div>
+      <div className="text-xs text-brand-muted mb-1">{label}</div>
+      <div className={`font-bold text-base ${color}`}>{value}</div>
+    </div>
+  );
+}
 
 export default function Reports() {
   const { data, error, loading, reload } = useApiData(() => api.getReports());
   const reports = data ?? [];
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-
-  const downloadCSV = async (expId: string) => {
-    setDownloadError(null);
-    try {
-      const csv = await api.getReportCsv(expId);
-      const csvStr = (csv.rows || []).map((r) => r.map(csvCell).join(',')).join('\n');
-      const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `report_${expId}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setDownloadError(`CSV export failed: ${toApiError(err).message}`);
-    }
-  };
-
-  const handlePrint = () => {
-    window.print();
-  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between print:hidden">
-        <h1 className="text-2xl font-bold text-deep-blue">Automated Experiment Reports</h1>
-        <button
-          onClick={handlePrint}
-          className="flex items-center gap-2 bg-white border border-soft-blue text-deep-blue font-medium px-4 py-2 rounded-lg hover:bg-ice-blue transition-colors shadow-sm text-sm"
-        >
-          <Printer className="w-4 h-4" />
-          Print / PDF Export
-        </button>
+      <div>
+        <h1 className="text-2xl font-bold text-deep-blue">Experiment Reports</h1>
+        <p className="text-sm text-brand-secondary mt-1">
+          One report per completed experiment: experiment information, participants, activity summary and log,
+          exceptions (unknown, low-confidence, workflow deviations) and review status.
+        </p>
       </div>
 
-      {downloadError && <StatusNotice tone="error">{downloadError}</StatusNotice>}
-
-      <div className="grid grid-cols-1 gap-6">
-        <DataState
-          loading={loading}
-          error={error}
-          isEmpty={reports.length === 0}
-          onRetry={reload}
-          emptyMessage="No experiment reports found. Process an experiment video to generate reports."
-        >
+      <DataState
+        loading={loading}
+        error={error}
+        isEmpty={reports.length === 0}
+        onRetry={reload}
+        emptyMessage="No experiment reports found. Process an experiment video to generate reports."
+      >
+        <div className="grid grid-cols-1 gap-6">
           {reports.map((rep) => (
-            <div key={rep.id} className="bg-white rounded-2xl border border-soft-blue shadow-sm p-6 space-y-4">
+            <div key={rep.report_id} className="bg-white rounded-2xl border border-soft-blue shadow-sm p-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between border-b border-soft-blue pb-4 gap-4">
-                <div>
+                <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <FileCheck className="w-5 h-5 text-sky-blue" />
-                    <h3 className="text-lg font-bold text-deep-blue">{rep.experiment}</h3>
+                    <FileCheck className="w-5 h-5 text-sky-blue flex-shrink-0" />
+                    <Link to={`/experiments/${rep.experiment_id}`} className="text-lg font-bold text-deep-blue hover:underline truncate">
+                      {rep.video}
+                    </Link>
                   </div>
-                  <p className="text-xs text-brand-secondary mt-1">Generated: {rep.date} | Report ID: {rep.id}</p>
+                  <p className="text-xs text-brand-secondary mt-1">
+                    {rep.report_id}
+                    {rep.processed_at && ` · processed ${parseServerDate(rep.processed_at).toLocaleString()}`}
+                    {` · ${formatDuration(rep.duration_seconds)} video`}
+                  </p>
                 </div>
-
-                <div className="flex items-center gap-3 print:hidden">
-                  <button
-                    onClick={() => downloadCSV(rep.experiment_id)}
-                    className="flex items-center gap-2 bg-ice-blue hover:bg-soft-blue text-deep-blue font-medium px-3 py-1.5 rounded-lg text-xs transition-colors"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-brand-success" />
-                    Export CSV
-                  </button>
-                  <button
-                    onClick={handlePrint}
-                    className="flex items-center gap-2 bg-sky-blue hover:bg-[#2CA1D9] text-white font-medium px-3 py-1.5 rounded-lg text-xs transition-colors shadow-sm"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download Summary
-                  </button>
+                <div className="flex items-center gap-2">
+                  <a href={api.reportUrl(rep.experiment_id, 'pdf')} className="flex items-center gap-1.5 bg-sky-blue hover:bg-[#2CA1D9] text-white font-bold px-3 py-1.5 rounded-lg text-xs">
+                    <FileText className="w-3.5 h-3.5" /> PDF
+                  </a>
+                  <a href={api.reportUrl(rep.experiment_id, 'csv')} className="flex items-center gap-1.5 bg-ice-blue hover:bg-soft-blue text-deep-blue font-bold px-3 py-1.5 rounded-lg text-xs">
+                    <FileSpreadsheet className="w-3.5 h-3.5" /> CSV
+                  </a>
+                  <a href={api.reportUrl(rep.experiment_id, 'json')} className="flex items-center gap-1.5 bg-ice-blue hover:bg-soft-blue text-deep-blue font-bold px-3 py-1.5 rounded-lg text-xs">
+                    <FileJson className="w-3.5 h-3.5" /> JSON
+                  </a>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm bg-ice-blue/40 p-4 rounded-xl border border-soft-blue">
-                <div>
-                  <div className="text-xs text-brand-muted mb-1">Total Logged Events</div>
-                  <div className="font-bold text-deep-blue text-base">{rep.events_count}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-brand-muted mb-1">Workflow Deviations</div>
-                  <div className={`font-bold text-base ${rep.deviations > 0 ? 'text-brand-alert' : 'text-brand-success'}`}>
-                    {rep.deviations} Flagged
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-brand-muted mb-1">Audit Status</div>
-                  <div className="font-bold text-brand-success text-base">{rep.status}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-brand-muted mb-1">Avg Confidence</div>
-                  <div className="font-bold text-deep-blue text-base">{rep.avg_confidence_pct}%</div>
-                </div>
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-sm bg-ice-blue/40 p-4 rounded-xl border border-soft-blue">
+                <Figure label="Activity events" value={rep.events} />
+                <Figure label="People" value={rep.people} />
+                <Figure label="Unknown events" value={rep.unknown_events} tone={rep.unknown_events ? 'alert' : undefined} />
+                <Figure label="Pending review" value={rep.pending_review} tone={rep.pending_review ? 'alert' : undefined} />
+                <Figure label="Avg confidence" value={rep.avg_confidence == null ? '—' : `${confidencePct(rep.avg_confidence)}%`} />
+                <Figure
+                  label="Workflow"
+                  tone={rep.workflow_compliant ? 'ok' : 'alert'}
+                  value={
+                    <span className="inline-flex items-center gap-1">
+                      {rep.workflow_compliant ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                      {rep.workflow_compliant ? 'Matches' : `${rep.workflow_deviations} deviations`}
+                    </span>
+                  }
+                />
               </div>
             </div>
           ))}
-        </DataState>
-      </div>
+        </div>
+      </DataState>
     </div>
   );
 }

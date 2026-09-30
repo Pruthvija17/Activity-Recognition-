@@ -164,3 +164,10 @@ def test_cors_preflight_allows_range_for_video_seeking(client):
     assert r.status_code == 200
     assert "range" in r.headers.get("access-control-allow-headers", "").lower()
     assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_video_responses_must_be_revalidated(client, sample_video):
+    with open(sample_video, "rb") as f:
+        vid = client.post("/api/videos/upload", files={"file": ("cache.mp4", f.read(), "video/mp4")}).json()["video_id"]
+    r = client.get(f"/api/videos/{vid}", headers={"Range": "bytes=0-9"})
+    assert r.headers["cache-control"] == "no-cache" and r.headers.get("etag")

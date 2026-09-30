@@ -121,6 +121,7 @@ function ResultsPanel({ video, events }: { video: VideoInfo; events: ActivityEve
             ))}
           </div>
           <div className="flex gap-3 text-sm">
+            <Link to={`/experiments/${video.video_id}`} className="text-sky-blue font-bold underline">Open experiment details</Link>
             <Link to="/review" className="text-sky-blue font-bold underline">Open Review Queue</Link>
             <Link to="/analytics" className="text-sky-blue font-bold underline">View Analytics</Link>
           </div>
@@ -421,12 +422,12 @@ export default function Experiments() {
                       </td>
                       <td className="px-6 py-3">
                         <div className="flex items-center gap-3 text-xs font-bold">
-                          <button
-                            onClick={() => setCurrentId(v.video_id)}
+                          <Link
+                            to={`/experiments/${v.video_id}`}
                             className="flex items-center gap-1 text-sky-blue hover:text-deep-blue"
                           >
-                            <Eye className="w-3.5 h-3.5" /> View
-                          </button>
+                            <Eye className="w-3.5 h-3.5" /> Details
+                          </Link>
                           {!isActive(v) && (
                             <button
                               onClick={() => startProcessing(v.video_id)}
